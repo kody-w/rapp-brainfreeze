@@ -156,4 +156,4 @@ python3 -m unittest discover -s tests -v    # offline: freeze, pack, safety chec
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

@@ -8,7 +8,7 @@ version = "0.2.0"
 description = "Freeze a running RAPP brainstem and resume it anywhere; disposable brainstems for testing."
 readme = "README.md"
 requires-python = ">=3.9"
-license = {text = "Apache-2.0"}
+license = {text = "MIT"}
 dependencies = []
 
 [project.scripts]
