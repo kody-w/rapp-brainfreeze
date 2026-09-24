@@ -110,6 +110,26 @@ def _read(path, default=None):
         return default
 
 
+def _fetch(where, limit=64 * 1024 * 1024):
+    """Bytes of a local file or an https URL (e.g. an egg's raw URL in the RAR catalog)."""
+    where = str(where)
+    if where.startswith("http://"):
+        raise ThrowawayError("refusing plain http; use an https URL")
+    if where.startswith("https://"):
+        try:
+            with urllib.request.urlopen(where, timeout=60) as r:
+                data = r.read(limit + 1)
+        except (urllib.error.URLError, OSError) as e:
+            raise ThrowawayError(f"could not download {where}: {e}")
+        if len(data) > limit:
+            raise ThrowawayError(f"{where} is larger than {limit} bytes")
+        return data
+    path = Path(where).expanduser()
+    if not path.is_file():
+        raise ThrowawayError(f"file not found: {path}")
+    return path.read_bytes()
+
+
 def _saved_token():
     """GITHUB_TOKEN, else the installed brainstem's sign-in, else one a throwaway saved earlier."""
     token = os.getenv("GITHUB_TOKEN", "").strip()
@@ -326,7 +346,7 @@ class Throwaway:
 
         The egg is verified first (§9.3). A fresh instance identity is minted and `grown_from`
         records the egg's address (§9.4). A session egg, if given, restores its conversation."""
-        blob = Path(egg).expanduser().read_bytes()
+        blob = _fetch(egg)
         ok, step, why = rapp1.verify_egg(blob)
         if not ok:
             raise ThrowawayError(f"egg failed verification at {step}: {why}")
@@ -341,7 +361,7 @@ class Throwaway:
         tw = cls(**kw)
         tw._egg = (manifest, files)
         if session:
-            sblob = Path(session).expanduser().read_bytes()
+            sblob = _fetch(session)
             ok, step, why = rapp1.verify_egg(sblob)
             if not ok:
                 raise ThrowawayError(f"session egg failed verification at {step}: {why}")

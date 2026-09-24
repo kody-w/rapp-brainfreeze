@@ -99,6 +99,7 @@ python3 -m brainfreeze egg tw-7097 --owner <your-github-login> --slug invoice-de
 # -> eggs/<owner>--invoice-desk.egg  (+ .session.egg with the conversation)
 
 python3 -m brainfreeze up --egg eggs/<owner>--invoice-desk.egg [--session eggs/<owner>--invoice-desk.session.egg]
+python3 -m brainfreeze up --egg https://raw.githubusercontent.com/kody-w/RAR/main/eggs/@kody-w/invoice-desk.egg   # straight from RAR
 ```
 
 ```python
