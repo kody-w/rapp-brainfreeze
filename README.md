@@ -15,6 +15,21 @@ The `.brainstem.py` run file is self-bootstrapping. It needs only `python3` and 
 install. On first use it sets up the Python packages in `~/.brainfreeze/.venv` and asks for a one-time
 GitHub Copilot device sign-in, cached in `~/.brainfreeze/.copilot_token`.
 
+## Why it's useful
+
+An `agent.py` is a capability you can drop in and share. A frozen brainstem is a whole working assistant,
+in the middle of a conversation, that you can drop in and share. For example:
+
+- **Hand off a live demo.** Whoever builds the product resumes it exactly as the audience saw it, then
+  replays the conversation as an acceptance test.
+- **Start every demo clean.** Resume a fresh copy of a primed brainstem for each audience, so nothing
+  carries over from one to the next.
+- **Reproducible bug reports.** Attach a snapshot and the maintainer resumes the exact state.
+- **Move between devices** or hand your brainstem to a colleague, with nothing installed on their side.
+- **Branch and compare.** Resume one moment twice and try two agents, souls or models side by side.
+
+[USE_CASES.md](USE_CASES.md) has the full list: what works today, with commands, and what isn't built yet.
+
 ## What a snapshot holds
 
 | Travels | Never travels |
