@@ -159,5 +159,93 @@ class HistoryCapTests(unittest.TestCase):
         self.assertEqual(len(tw._sendable_history()), 5)
 
 
+class EggTests(unittest.TestCase):
+    RID = "rappid:@kody-w/test-desk:" + "a" * 64
+    UTC = "2026-09-23T12:00:00.000Z"
+
+    def lay(self, **kw):
+        src = make_brainstem(tempfile.mkdtemp(dir=TMP))
+        out = tempfile.mkdtemp(dir=TMP)
+        args = dict(rappid=self.RID, history=HISTORY, created_utc=self.UTC)
+        args.update(kw)
+        return src, bf.lay_egg(src, out, **args)
+
+    def test_organism_egg_verifies_and_carries_no_engine_or_secrets(self):
+        _, laid = self.lay()
+        blob = laid["organism"].read_bytes()
+        self.assertEqual(bf.rapp1.verify_egg(blob)[0], True)
+        manifest, files = bf.rapp1.read_egg(blob)
+        self.assertEqual(manifest["variant"], "organism")
+        self.assertIn("soul.md", files)
+        self.assertIn("agents/router_agent.py", files)
+        self.assertIn(".brainstem_data/shared_memories/memory.json", files)
+        self.assertNotIn("brainstem.py", files)
+        for path in files:
+            self.assertFalse(path.endswith((".copilot_token", ".env", ".brainstem_secret", ".pyc")), path)
+        self.assertNotIn(b"do-not-travel", b"".join(files.values()))
+        self.assertEqual(manifest["payload"]["engine"]["version"], "9.9.9")
+        self.assertEqual(manifest["payload"]["settings_needed"], ["ROUTER_LIMIT", "SECRET_API_KEY"])
+
+    def test_session_egg_holds_the_conversation(self):
+        _, laid = self.lay()
+        blob = laid["session"].read_bytes()
+        self.assertTrue(bf.rapp1.verify_egg(blob)[0])
+        manifest, _ = bf.rapp1.read_egg(blob)
+        self.assertEqual(manifest["variant"], "session")
+        self.assertEqual(manifest["payload"]["transcript"], HISTORY)
+
+    def test_memory_can_be_left_out(self):
+        _, laid = self.lay(include_memory=False)
+        _, files = bf.rapp1.read_egg(laid["organism"].read_bytes())
+        self.assertFalse(any(p.startswith(".brainstem_data") for p in files))
+
+    def test_byte_reproducible(self):
+        _, a = self.lay()
+        _, b = self.lay()
+        self.assertEqual(a["organism"].read_bytes(), b["organism"].read_bytes())
+        self.assertEqual(a["address"], b["address"])
+
+    def test_new_rappid_is_minted_not_name_derived(self):
+        _, a = self.lay(rappid=None, owner="Kody-W", slug="test-desk")
+        _, b = self.lay(rappid=None, owner="kody-w", slug="test-desk")
+        self.assertTrue(a["rappid"].startswith("rappid:@kody-w/test-desk:"))
+        self.assertNotEqual(a["rappid"], b["rappid"])
+
+    def test_tampered_egg_is_refused(self):
+        _, laid = self.lay()
+        blob = bytearray(laid["organism"].read_bytes())
+        i = blob.find(b"You are a test soul.")
+        blob[i] = ord("Y") ^ 1
+        bad = Path(TMP) / "tampered.egg"
+        bad.write_bytes(bytes(blob))
+        with self.assertRaises(bf.ThrowawayError):
+            bf.Throwaway.hatch(bad)
+
+    def test_hatch_lays_files_and_records_lineage(self):
+        _, laid = self.lay()
+        tw = bf.Throwaway.hatch(laid["organism"], session=laid["session"], name=f"h-{os.urandom(3).hex()}")
+        self.assertTrue(tw.bare)
+        self.assertEqual(tw.source, "grail")          # "other" engines hatch onto the grail
+        tw.brainstem_dir.mkdir(parents=True)
+        tw._apply_egg()
+        self.assertEqual((tw.brainstem_dir / "soul.md").read_text(), "You are a test soul.\n")
+        self.assertTrue((tw.brainstem_dir / "agents" / "router_agent.py").exists())
+        self.assertFalse((tw.brainstem_dir / "rappid.json").exists())
+        inst = json.loads((tw.dir / "instance.json").read_text())
+        self.assertEqual(inst["artifact"], self.RID)
+        self.assertEqual(inst["grown_from"], laid["address"])
+        self.assertTrue(inst["rappid"].startswith("rappid:@kody-w/test-desk:"))
+        self.assertNotEqual(inst["rappid"], self.RID)
+        self.assertEqual(tw.history, HISTORY)
+
+
+class VendorTests(unittest.TestCase):
+    def test_reference_implementation_is_unmodified(self):
+        pkg = Path(bf.__file__).parent
+        meta = json.loads((pkg / "rapp1.vendor.json").read_text())
+        import hashlib
+        self.assertEqual(hashlib.sha256((pkg / "rapp1.py").read_bytes()).hexdigest(), meta["sha256"])
+
+
 if __name__ == "__main__":
     unittest.main()

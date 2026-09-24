@@ -3,7 +3,7 @@ import argparse
 import json
 import sys
 
-from . import Throwaway, ThrowawayError, down, freeze, list_throwaways, pack, replay
+from . import Throwaway, ThrowawayError, down, freeze, lay_egg, list_throwaways, pack, replay
 
 
 def main(argv=None):
@@ -22,6 +22,17 @@ def main(argv=None):
     up.add_argument("--soul", help="soul.md to use instead of the default")
     up.add_argument("--kit", help="a handoff kit folder: rebuild that exact demo brainstem")
     up.add_argument("--snapshot", help="resume a frozen brainstem (.snapshot.tar.gz), conversation included")
+    up.add_argument("--egg", help="hatch a rapp/1 organism egg onto the engine it expects")
+    up.add_argument("--session", help="with --egg: a session egg whose conversation to restore")
+
+    eg = sub.add_parser("egg", help="lay a rapp/1 organism egg (no engine code) + session egg")
+    eg.add_argument("target", help="throwaway name, or a path to a rapp_brainstem folder")
+    eg.add_argument("--owner", help="your lowercase GitHub login (for a new rappid)")
+    eg.add_argument("--slug", help="lowercase-hyphen name (for a new rappid)")
+    eg.add_argument("--rappid", help="reuse an existing rappid instead of minting one")
+    eg.add_argument("--no-memory", action="store_true", help="leave the brainstem's memory out")
+    eg.add_argument("--no-session", action="store_true", help="do not lay a session egg")
+    eg.add_argument("--out", default=".", help="folder to write the eggs to")
 
     fz = sub.add_parser("freeze", help="snapshot a running throwaway, or any brainstem folder")
     fz.add_argument("target", help="throwaway name, or a path to a rapp_brainstem folder")
@@ -51,7 +62,10 @@ def main(argv=None):
     try:
         if a.cmd == "up":
             env = dict(kv.split("=", 1) for kv in a.env)
-            if a.snapshot:
+            if a.egg:
+                tw = Throwaway.hatch(a.egg, session=a.session, port=a.port, name=a.name, env=env,
+                                     keep=True).up()
+            elif a.snapshot:
                 tw = Throwaway.thaw(a.snapshot, port=a.port, name=a.name, env=env, keep=True).up()
             elif a.kit:
                 tw = Throwaway.from_kit(a.kit, port=a.port, name=a.name, env=env, keep=True).up()
@@ -59,6 +73,10 @@ def main(argv=None):
                 tw = Throwaway(source=a.source, port=a.port, name=a.name, bare=a.bare, agents=a.agent,
                                env=env, keep=True, ref=a.ref, soul=a.soul).up()
             h = tw.health()
+            inst = tw.dir / "instance.json"
+            if inst.exists():
+                i = json.loads(inst.read_text())
+                print(f"hatched: {i['artifact']}\ninstance: {i['rappid']}\ngrown_from: {i['grown_from']}")
             if getattr(tw, "frozen", None):
                 print(f"resumed: session {tw.session_id} with {len(tw.history)} messages "
                       f"(frozen {tw.frozen.get('created')})")
@@ -76,6 +94,21 @@ def main(argv=None):
             print(f"snapshot: {snap}")
             if a.run_file:
                 print(f"run file: {pack(snap)}")
+        elif a.cmd == "egg":
+            from pathlib import Path
+            if (Path(a.target).expanduser() / "soul.md").exists():
+                bdir, hist = a.target, []
+            else:
+                tw = Throwaway.attach(a.target)
+                bdir, hist = tw.brainstem_dir, tw.history
+            laid = lay_egg(bdir, a.out, owner=a.owner, slug=a.slug, rappid=a.rappid,
+                           include_memory=not a.no_memory, history=None if a.no_session else hist)
+            print(f"organism: {laid['organism']}  ({laid['files']} files, verified)")
+            if laid["session"]:
+                print(f"session:  {laid['session']}")
+            print(f"rappid:   {laid['rappid']}\naddress:  {laid['address']}")
+            if laid["left_out"]:
+                print(f"left out (invalid egg paths): {', '.join(laid['left_out'][:10])}")
         elif a.cmd == "pack":
             print(f"run file: {pack(a.snapshot, a.out)}")
         elif a.cmd == "replay":

@@ -33,8 +33,11 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-__all__ = ["Throwaway", "ChatResult", "ThrowawayError", "list_throwaways", "down", "replay", "freeze", "pack"]
-__version__ = "0.1.0"
+from . import rapp1   # the RAPP reference implementation, vendored verbatim (see rapp1.vendor.json)
+
+__all__ = ["Throwaway", "ChatResult", "ThrowawayError", "list_throwaways", "down", "replay", "freeze", "pack",
+           "lay_egg"]
+__version__ = "0.2.0"
 
 ROOT = Path(os.getenv("BRAINFREEZE_ROOT", Path.home() / ".brainfreeze"))
 REAL = Path.home() / ".brainstem" / "src" / "rapp_brainstem"
@@ -223,6 +226,8 @@ class Throwaway:
             for f in self.agents_dir.glob("*_agent.py"):
                 if f.name != "basic_agent.py":
                     f.rename(parked / f.name)
+        if getattr(self, "_egg", None):
+            self._apply_egg()
         for a in self.agents:
             self.add_agent(a)
 
@@ -314,6 +319,58 @@ class Throwaway:
         self.commit = state.get("brainstem", {}).get("commit")
         self.frozen = state
         self._save_conversation()
+
+    @classmethod
+    def hatch(cls, egg, session=None, **overrides):
+        """Hatch a rapp/1 organism egg onto the engine it expects (never engine code from the egg).
+
+        The egg is verified first (§9.3). A fresh instance identity is minted and `grown_from`
+        records the egg's address (§9.4). A session egg, if given, restores its conversation."""
+        blob = Path(egg).expanduser().read_bytes()
+        ok, step, why = rapp1.verify_egg(blob)
+        if not ok:
+            raise ThrowawayError(f"egg failed verification at {step}: {why}")
+        manifest, files = rapp1.read_egg(blob)
+        if manifest["variant"] != "organism":
+            raise ThrowawayError(f"expected an organism egg, got {manifest['variant']}")
+        engine = (manifest.get("payload") or {}).get("engine") or {}
+        known = engine.get("source") in SOURCES
+        kw = dict(source=engine.get("source") if known else "grail",
+                  ref=(engine.get("commit") or None) if known else None, bare=True)
+        kw.update(overrides)
+        tw = cls(**kw)
+        tw._egg = (manifest, files)
+        if session:
+            sblob = Path(session).expanduser().read_bytes()
+            ok, step, why = rapp1.verify_egg(sblob)
+            if not ok:
+                raise ThrowawayError(f"session egg failed verification at {step}: {why}")
+            sman, _ = rapp1.read_egg(sblob)
+            if sman["variant"] != "session":
+                raise ThrowawayError(f"expected a session egg, got {sman['variant']}")
+            tw._egg_history = [t for t in sman["payload"]["transcript"]
+                               if t.get("role") in ("user", "assistant") and isinstance(t.get("content"), str)]
+        return tw
+
+    def _apply_egg(self):
+        manifest, files = self._egg
+        for path, octets in files.items():
+            if path == "rappid.json":
+                continue                      # the artifact identity; the instance gets its own below
+            dest = self.brainstem_dir / path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(octets)
+        artifact = manifest["rappid"]
+        parts = rapp1.rappid_parts(artifact)
+        (self.dir / "instance.json").write_text(json.dumps({
+            "rappid": rapp1.mint_rappid(parts["owner"], parts["slug"]),     # §9.4: fresh, from entropy
+            "artifact": artifact,
+            "grown_from": rapp1.egg_address(manifest),
+        }, indent=2))
+        (self.dir / "source").write_text(f"egg {artifact}")
+        if getattr(self, "_egg_history", None):
+            self.history = list(self._egg_history)
+            self._save_conversation()
 
     @classmethod
     def thaw(cls, snapshot, **overrides):
@@ -719,3 +776,105 @@ def pack(snapshot, out=None, title=None):
     out.write_text(text)
     os.chmod(out, 0o755)
     return out
+
+
+def _utc_ms():
+    return time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+
+
+def _walk(base, prefix, skip):
+    """{posix path: octets} for every file under base, leaving out skipped names and invalid paths."""
+    files, left_out = {}, []
+    if not base.is_dir():
+        return files, left_out
+    for root, dirs, names in os.walk(base):
+        dirs[:] = sorted(d for d in dirs if d not in skip)
+        for n in sorted(names):
+            if n in skip or n.endswith((".pyc", ".tmp", ".partial")):
+                continue
+            full = Path(root) / n
+            if full.is_symlink():
+                continue
+            rel = f"{prefix}/{full.relative_to(base).as_posix()}"
+            if rapp1._path_valid(rel):
+                files[rel] = full.read_bytes()
+            else:
+                left_out.append(rel)
+    return files, left_out
+
+
+def lay_egg(brainstem_dir, out_dir=".", owner=None, slug=None, rappid=None, include_memory=True,
+            history=None, created_utc=None):
+    """Lay a rapp/1 `organism` egg from a brainstem (plus a `session` egg for the conversation).
+
+    The egg carries agents, soul, memory and the engine version it expects, and never the
+    engine code itself: it hatches onto the receiver's engine. Every egg is verified with
+    the reference implementation before it is written. Returns a dict of what was laid.
+    """
+    src = Path(brainstem_dir).expanduser().resolve()
+    if not (src / "soul.md").is_file():
+        raise ThrowawayError(f"no soul.md in {src}")
+    if rappid:
+        if not rapp1.rappid_valid(rappid):
+            raise ThrowawayError(f"not a valid rappid: {rappid}")
+    else:
+        if not owner or not slug:
+            raise ThrowawayError("owner and slug are required to mint a new rappid")
+        try:
+            rappid = rapp1.mint_rappid(owner.lower(), slug)
+        except ValueError as e:
+            raise ThrowawayError(f"{e}: owner is your lowercase GitHub login, slug is lowercase-with-hyphens")
+    parts = rapp1.rappid_parts(rappid)
+    utc = created_utc or _utc_ms()
+
+    skip = set(_NEVER_FREEZE)
+    files = {"rappid.json": rapp1.canonical({"schema": "rapp/1", "rappid": rappid}).encode("utf-8"),
+             "soul.md": (src / "soul.md").read_bytes()}
+    agent_files, left_out = _walk(src / "agents", "agents", skip)
+    files.update(agent_files)
+    if include_memory:
+        mem, more = _walk(src / ".brainstem_data", ".brainstem_data", skip)
+        files.update(mem)
+        left_out += more
+        if (src / ".brainstem_model").is_file():
+            files[".brainstem_model"] = (src / ".brainstem_model").read_bytes()
+
+    remote = _git_out(src, "remote", "get-url", "origin")
+    source = "grail" if "rapp-installer" in remote else "canary" if "rapp-canary" in remote else "other"
+    settings = []
+    if (src / ".env").exists():
+        for line in (src / ".env").read_text(errors="replace").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                settings.append(line.split("=", 1)[0].replace("export ", "").strip())
+    payload = {
+        "engine": {"name": "rapp-brainstem", "version": _read(src / "VERSION") or "",
+                   "source": source,
+                   "commit": (_git_out(src, "rev-parse", "HEAD") if source != "other" else "") or ""},
+        "memory_included": bool(include_memory),
+        "settings_needed": sorted(set(settings)),
+        "made_with": f"brainfreeze/{__version__}",
+    }
+    blob = rapp1.pack_egg("organism", rappid, utc, files=files, payload=payload)
+    ok, step, why = rapp1.verify_egg(blob)
+    if not ok:
+        raise ThrowawayError(f"laid an egg that fails verification at {step}: {why}")
+    out_dir = Path(out_dir).expanduser()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    organism = out_dir / f"{parts['owner']}--{parts['slug']}.egg"
+    organism.write_bytes(blob)
+    manifest, _ = rapp1.read_egg(blob)
+    laid = {"organism": organism, "rappid": rappid, "address": rapp1.egg_address(manifest),
+            "files": len(files), "left_out": left_out, "session": None}
+
+    turns = [{"role": m["role"], "content": m["content"]} for m in (history or [])
+             if isinstance(m, dict) and m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)]
+    if turns:
+        sblob = rapp1.pack_egg("session", rappid, utc, payload={
+            "runtime": f"rapp-brainstem/{payload['engine']['version'] or 'unknown'}", "transcript": turns})
+        ok, step, why = rapp1.verify_egg(sblob)
+        if not ok:
+            raise ThrowawayError(f"laid a session egg that fails verification at {step}: {why}")
+        laid["session"] = out_dir / f"{parts['owner']}--{parts['slug']}.session.egg"
+        laid["session"].write_bytes(sblob)
+    return laid

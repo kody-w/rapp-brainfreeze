@@ -78,11 +78,49 @@ python3 -m brainfreeze up --snapshot demo.snapshot.tar.gz     # resume a snapsho
 python3 -m brainfreeze chat tw-7097 "Hello"                    # continues that throwaway's conversation
 python3 -m brainfreeze freeze tw-7097 --run-file               # freeze a throwaway (or a brainstem folder)
 python3 -m brainfreeze pack demo.snapshot.tar.gz               # snapshot -> self-bootstrapping .py
+python3 -m brainfreeze egg tw-7097 --owner you --slug my-desk  # rapp/1 organism egg (+ session egg)
+python3 -m brainfreeze up --egg you--my-desk.egg               # hatch an egg onto the grail engine it expects
 python3 -m brainfreeze list
 python3 -m brainfreeze down tw-7097                            # or: down all
 ```
 
 `pip install -e .` adds a `brainfreeze` command.
+
+## Eggs: brainstems for the registry
+
+A snapshot is an exact clone, engine included, for private hand-offs. For publishing, brainfreeze lays a
+standard **rapp/1 `organism` egg** instead: the brainstem's agents, soul and (optionally) memory, plus the
+engine version it expects, and **never the engine code itself**. An egg hatches onto the receiver's own
+engine, so nobody runs engine code downloaded from a registry. The conversation, if any, goes in a
+separate `session` egg.
+
+```bash
+python3 -m brainfreeze egg tw-7097 --owner <your-github-login> --slug invoice-desk --out eggs/
+# -> eggs/<owner>--invoice-desk.egg  (+ .session.egg with the conversation)
+
+python3 -m brainfreeze up --egg eggs/<owner>--invoice-desk.egg [--session eggs/<owner>--invoice-desk.session.egg]
+```
+
+```python
+from brainfreeze import Throwaway, lay_egg
+laid = lay_egg("~/.brainstem/src/rapp_brainstem", "eggs/", owner="you", slug="invoice-desk",
+               include_memory=False)
+with Throwaway.hatch(laid["organism"]) as bs:
+    print(bs.chat("Route an invoice for $22,400").response)
+```
+
+Eggs follow the RAPP egg spec ([rapp-1 SPEC §9](https://github.com/kody-w/rapp-1/blob/main/SPEC.md)):
+byte-reproducible, every file hashed, a minted `rappid`. Each egg is checked with the RAPP reference
+implementation before it is written, and again before it hatches. A hatch mints a fresh instance identity
+and records the egg it `grown_from`. The reference implementation is vendored verbatim as
+`brainfreeze/rapp1.py`; `rapp1.vendor.json` records its source commit and checksum.
+
+| | Snapshot (`freeze`) | Egg (`egg`) |
+|---|---|---|
+| For | Private hand-offs, device moves, bug repros | Publishing and sharing templates |
+| Engine code | Included, exactly as it ran | Never included; hatches onto the receiver's engine |
+| Conversation | Included | Optional separate `session` egg |
+| Format | `.snapshot.tar.gz` / self-bootstrapping `.brainstem.py` | rapp/1 `organism` + `session` eggs |
 
 ## Handoff kits
 

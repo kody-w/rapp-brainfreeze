@@ -119,8 +119,14 @@ one you need, in about 30 seconds. A hundred brainstems cost only the disk space
 **Not tested yet.** Resume a laptop snapshot in a cloud container, taking its state along from local to hosted.
 
 ### Ready-to-run brainstems in a registry
-**Not built yet.** Publish whole frozen brainstems (templates) in the RAPP Agent Registry next to single
-agents, so people can start from a complete, working setup.
+**Eggs work today; listing them in the registry is next.** Lay a template brainstem as a standard rapp/1
+`organism` egg: agents, soul and optional memory, with no engine code. Anyone can hatch it onto their own
+engine. The next step is listing these eggs in the RAPP Agent Registry next to single agents.
+
+```bash
+python3 -m brainfreeze egg tw-7097 --owner you --slug invoice-desk --no-memory
+python3 -m brainfreeze up --egg you--invoice-desk.egg
+```
 
 ### Brainstems as agents
 **Not built yet.** An agent resumes a snapshot on its own port and passes questions to it, so specialist
