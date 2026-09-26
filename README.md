@@ -1,5 +1,9 @@
 # brainfreeze
 
+<!-- rapp1:network-header:start -->
+[![RAPP/1](https://kody-w.github.io/rapp-hive-public/portfolio/badges/rapp-brainfreeze.svg)](https://github.com/kody-w/rapp-hive-public/blob/main/portfolio/repos/rapp-brainfreeze.md) · **New to RAPP?** [Start here: get your Brainstem →](https://github.com/kody-w/rapp-installer#start-here)
+<!-- rapp1:network-header:end -->
+
 Freeze a running RAPP brainstem and resume it anywhere, with the same engine, agents, soul, memory, model
 and conversation, picking up exactly where it left off. Standard library only.
 
