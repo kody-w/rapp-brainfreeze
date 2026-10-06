@@ -8,6 +8,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import unittest.mock
 import zipfile
 from pathlib import Path
 
@@ -451,6 +452,31 @@ class SignAndUpdateTests(unittest.TestCase):
         self.assertIn("agents added: new_agent.py", change)
         self.assertIn("memory: 1 -> 2 entries", change)
         self.assertEqual(bf.lineage.find_updates(v2.read_bytes(), self.catalog), [])
+
+
+class CustomSoulTests(unittest.TestCase):
+    def test_a_custom_soul_is_the_one_frozen_and_laid(self):
+        base = Path(tempfile.mkdtemp(dir=TMP))
+        src = make_brainstem(base)
+        soul = base / "custom-soul.md"
+        soul.write_text("You are the RFP Response Copilot.\n")
+        tw = bf.Throwaway(source=str(base), name="soul-test", soul=soul)
+        tw.dir.mkdir(parents=True, exist_ok=True)
+        import shutil as _sh
+        _sh.copytree(src, tw.brainstem_dir)
+        with unittest.mock.patch("subprocess.Popen") as popen, unittest.mock.patch.object(bf.Throwaway, "health",
+                return_value={"copilot": "\u2713"}), unittest.mock.patch.object(bf, "_hold"):
+            popen.return_value.pid, popen.return_value.poll.return_value = 0, None
+            tw._python = lambda: sys.executable
+            tw._start()
+            env = popen.call_args.kwargs["env"]
+        self.assertEqual(env["SOUL_PATH"], str(tw.brainstem_dir / "soul.md"))
+        self.assertEqual((tw.brainstem_dir / "soul.md").read_text(), "You are the RFP Response Copilot.\n")
+        snap = bf.freeze(tw.brainstem_dir, base / "s.snapshot.tar.gz")
+        with tarfile.open(snap) as t:
+            self.assertEqual(t.extractfile("rapp_brainstem/soul.md").read(), b"You are the RFP Response Copilot.\n")
+        laid = bf.lay_egg(tw.brainstem_dir, base / "eggs", owner="kody-w", slug="soul-test")
+        self.assertEqual(bf.rapp1.read_egg(laid["organism"].read_bytes())[1]["soul.md"], b"You are the RFP Response Copilot.\n")
 
 
 class LineageTests(unittest.TestCase):
