@@ -47,6 +47,8 @@ def main(argv=None):
     fz.add_argument("--out", help="snapshot file to write")
     fz.add_argument("--run-file", action="store_true",
                     help="also write a self-bootstrapping .py that resumes it anywhere")
+    fz.add_argument("--with", dest="sidecars", action="append", default=[],
+                    help="a sidecar folder to bundle and start beside the kernel (repeatable; see docs/BUNDLE.md)")
 
     pk = sub.add_parser("pack", help="turn a snapshot into a self-bootstrapping .py")
     pk.add_argument("snapshot")
@@ -96,9 +98,11 @@ def main(argv=None):
             import time as _t
             if (Path(a.target).expanduser() / "brainstem.py").exists():
                 out = a.out or f"brainstem-{_t.strftime('%Y%m%d-%H%M%S')}.snapshot.tar.gz"
-                snap = freeze(a.target, out)
+                snap = freeze(a.target, out, sidecars=a.sidecars)
             else:
                 tw = Throwaway.attach(a.target)
+                if a.sidecars:
+                    raise ThrowawayError("--with works when freezing a brainstem folder; a throwaway keeps the sidecars it was thawed with")
                 snap = tw.freeze(a.out)
                 p = tw.parent()
                 if p:
