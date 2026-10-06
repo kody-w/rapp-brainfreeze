@@ -308,8 +308,11 @@ class Throwaway:
         if self.soul:
             if not self.soul.is_file():
                 raise ThrowawayError(f"soul file not found: {self.soul}")
-            shutil.copy(self.soul, self.dir / "soul.md")
-            env["SOUL_PATH"] = str(self.dir / "soul.md")
+            # The soul lives in the brainstem itself, so a freeze or an egg carries the soul it ran with
+            # (it used to sit beside the brainstem, and freezes shipped the engine's default soul instead).
+            if self.soul.resolve() != (self.brainstem_dir / "soul.md").resolve():
+                shutil.copy(self.soul, self.brainstem_dir / "soul.md")
+            env["SOUL_PATH"] = str(self.brainstem_dir / "soul.md")
         token = _saved_token()
         if token:
             env["GITHUB_TOKEN"] = token
