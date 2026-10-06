@@ -45,6 +45,12 @@ in the middle of a conversation, that you can drop in and share. For example:
 | Chosen model | |
 | Conversation and session id | |
 
+Every snapshot carries a **`bundle.json`** ([docs/BUNDLE.md](docs/BUNDLE.md)): each file by SHA-256, the kernel
+pin (a distro's own `kernel.json`, or the engine as frozen), and any **sidecars** bundled with `--with`. A thaw
+checks every hash before anything starts and refuses on the first changed file, by name; a run file also checks
+its own payload, so a single changed byte stops it. Service sidecars start beside the kernel on their own port and
+stop with it.
+
 A snapshot of a throwaway also records its **parent**: the SHA-256 of the snapshot it was thawed from, or
 the address of the egg it hatched from. Re-freezing after a change makes a child that points at the exact
 freeze it came from (`state.json` → `parent`).
@@ -93,6 +99,8 @@ python3 -m brainfreeze pack demo.snapshot.tar.gz               # snapshot -> sel
 python3 -m brainfreeze egg tw-7097 --owner you --slug my-desk  # rapp/1 organism egg (+ session egg)
 python3 -m brainfreeze up --egg you--my-desk.egg               # hatch an egg onto the grail engine it expects
 python3 -m brainfreeze egg-upgrade old.egg                     # say what an .egg is; convert older brainstem eggs
+python3 -m brainfreeze freeze ~/my-distro --with ~/brainstem-mcp --run-file   # bundle a sidecar; kernel pinned
+python3 demo.brainstem.py --inspect                            # what is inside, checked, without running it
 python3 -m brainfreeze list
 python3 -m brainfreeze down tw-7097                            # or: down all
 ```

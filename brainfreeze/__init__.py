@@ -233,12 +233,14 @@ class Throwaway:
             raise ThrowawayError(f"port {self.port} is already in use")
         self.name = self.name or f"tw-{self.port}"
         if self.dir.exists():
+            _release_port(self.port)
             raise ThrowawayError(f"{self.dir} already exists; down('{self.name}') first")
 
         try:
             self._fetch_source()
             self._prepare_agents()
             self._start()
+            self._start_sidecars()
         except BaseException:
             self._teardown(quiet=True)
             raise
@@ -335,6 +337,27 @@ class Throwaway:
         tail = "\n".join(_read(self.log_path, "").splitlines()[-20:])
         raise ThrowawayError(f"{self.name} did not answer on :{self.port}. Last log lines:\n{tail}")
 
+    def _start_sidecars(self):
+        """Start the bundle's service sidecars beside the kernel, each on its own reserved port."""
+        bundle = getattr(self, "bundle", None) or {}
+        running = []
+        for entry in bundle.get("sidecars", []):
+            if entry.get("kind", "service") != "service":
+                continue
+            from . import bundle as _bundle
+            port = 7300
+            while _port_busy(port) or not _reserve_port(port):
+                port += 1
+            try:
+                pid = _bundle.start_sidecar(entry, self.dir / entry["path"], port, self.url,
+                                            self.dir / f"sidecar-{entry['name']}.log")
+            except _bundle.BundleError as e:
+                _release_port(port)
+                raise ThrowawayError(str(e))
+            running.append({"name": entry["name"], "pid": pid, "port": port, "url": f"http://127.0.0.1:{port}"})
+            (self.dir / "sidecars.json").write_text(json.dumps(running, indent=2))
+        self.sidecars = running
+
     def _device_sign_in(self, timeout=900):
         """No saved sign-in on this machine: run GitHub's device login once and cache it."""
         start = self._request("POST", "/login", {}, timeout=30)
@@ -366,9 +389,18 @@ class Throwaway:
             for member in tar.getmembers():
                 name = member.name
                 if (name.startswith("/") or ".." in Path(name).parts or member.issym() or member.islnk()
-                        or not (name == "state.json" or name.startswith("rapp_brainstem"))):
+                        or not (name in ("state.json", "bundle.json", "bundle.sig")
+                                or name.startswith(("rapp_brainstem", "sidecars/")) or name == "sidecars")):
                     raise ThrowawayError(f"snapshot has an unsafe entry: {name}")
             tar.extractall(self.dir)
+        self.bundle = None
+        if (self.dir / "bundle.json").is_file():
+            from . import bundle as _bundle
+            self.bundle = json.loads((self.dir / "bundle.json").read_text())
+            try:
+                _bundle.verify(self.dir, self.bundle)
+            except _bundle.BundleError as e:
+                raise ThrowawayError(f"refusing to start: {e}")
         state = json.loads((self.dir / "state.json").read_text())
         self.history = state.get("history", [])
         self.session_id = state.get("session_id")
@@ -451,8 +483,13 @@ class Throwaway:
         """Snapshot this running throwaway, conversation included. The snapshot names its parent: the snapshot
         this throwaway was thawed from (by SHA-256), or the egg it hatched from."""
         out = out or Path.cwd() / f"{self.name}-{time.strftime('%Y%m%d-%H%M%S')}{SNAPSHOT_SUFFIX}"
+        carried = []
+        try:
+            carried = [(e, self.dir / e["path"]) for e in json.loads((self.dir / "bundle.json").read_text()).get("sidecars", [])]
+        except (OSError, ValueError):
+            pass
         return freeze(self.brainstem_dir, out, history=self.history, session_id=self.session_id,
-                      model=self.health().get("model"), extra={"parent": self.parent()})
+                      model=self.health().get("model"), extra={"parent": self.parent()}, sidecars=carried)
 
     def parent(self):
         """What this throwaway grew from: {"snapshot_sha256", "snapshot"}, {"egg_address", "rappid"}, or None."""
@@ -483,6 +520,17 @@ class Throwaway:
         self._teardown()
 
     def _teardown(self, quiet=False):
+        try:
+            sidecars = json.loads((self.dir / "sidecars.json").read_text()) if self.name else []
+        except (OSError, ValueError):
+            sidecars = []
+        for sc in sidecars:
+            if _alive(sc.get("pid")):
+                try:
+                    getattr(os, "killpg", os.kill)(sc["pid"], signal.SIGTERM)
+                except OSError:
+                    pass
+            _release_port(sc.get("port"))
         pid = self._pid or (int(_read(self.dir / "pid", "0") or 0) if self.name else 0)
         if pid and _alive(pid):
             try:
@@ -672,7 +720,7 @@ def _git_out(cwd, *args):
 
 
 def freeze(brainstem_dir, out, history=(), session_id=None, model=None, extra=None,
-           include_memory=True, exclude=()):
+           include_memory=True, exclude=(), sidecars=()):
     """Snapshot a brainstem's full state into one file that thaw() resumes anywhere.
 
     Captures the engine code as it is (local changes included), agents, soul, memory
@@ -727,14 +775,56 @@ def freeze(brainstem_dir, out, history=(), session_id=None, model=None, extra=No
             return None
         return info
 
+    import io
+    from . import bundle as _bundle
+    side = []                                   # (entry, folder): a path to describe, or an entry + folder to carry
+    for sc in sidecars:
+        side.append(sc if isinstance(sc, tuple) else _bundle.sidecar_entry(sc))
+    names = [e["name"] for e, _ in side]
+    if len(names) != len(set(names)):
+        raise ThrowawayError(f"two sidecars share a name: {names}")
+    collect = _bundle.Collector(src)
+
+    def _add_tree(tar, root, arcroot, keep, on_file=None):
+        # Each file is read once: the bytes hashed are the bytes shipped, even if the brainstem writes meanwhile.
+        for path in [root, *sorted(root.rglob("*"))]:
+            rel = path.relative_to(root)
+            info = keep(tar.gettarinfo(str(path), arcname=str(Path(arcroot) / rel) if str(rel) != "." else arcroot))
+            if info is None or not (info.isdir() or info.isfile()):
+                continue
+            if info.isdir():
+                tar.addfile(info)
+                continue
+            data = path.read_bytes()
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+            if on_file:
+                on_file(rel.as_posix(), data)
+
+    def _keep_sidecar(info):
+        parts = Path(info.name).parts
+        if set(parts) & _bundle.SIDECAR_SKIP or info.name.endswith(".pyc") or info.issym() or info.islnk():
+            return None
+        return info
+
     tmp = out.with_name(out.name + ".partial")
     with tarfile.open(tmp, "w:gz") as tar:
-        tar.add(src, arcname="rapp_brainstem", filter=_keep)
-        data = json.dumps(state, indent=2).encode()
-        info = tarfile.TarInfo("state.json")
-        info.size, info.mtime = len(data), int(time.time())
-        import io
-        tar.addfile(info, io.BytesIO(data))
+        _add_tree(tar, src, "rapp_brainstem", _keep, lambda rel, data: collect.files.__setitem__(rel, _bundle.sha256_bytes(data)))
+        for entry, folder in side:
+            got = {}
+            _add_tree(tar, Path(folder), entry["path"], _keep_sidecar, lambda rel, data: got.__setitem__(rel, _bundle.sha256_bytes(data)))
+            entry["files"] = got
+        try:
+            bundle = collect.bundle([e for e, _ in side], parent=state.get("parent"))
+        except _bundle.BundleError as e:
+            tar.close()
+            os.remove(tmp)
+            raise ThrowawayError(str(e))
+        for name, obj in (("bundle.json", bundle), ("state.json", state)):
+            data = json.dumps(obj, indent=2).encode()
+            info = tarfile.TarInfo(name)
+            info.size, info.mtime = len(data), int(time.time())
+            tar.addfile(info, io.BytesIO(data))
     os.replace(tmp, out)
     return out
 
@@ -752,12 +842,42 @@ _BOOTSTRAP = """#!/usr/bin/env python3
 # The first run on a machine with no brainstem sets up Python packages and asks you to
 # sign in to GitHub Copilot once. Sign-in and secrets are never inside this file.
 # Frozen: {created} | brainstem {version} | {n_msgs} conversation messages | settings: {settings}
-import argparse, base64, hashlib, io, os, sys, time, webbrowser, zipfile
+# Inside: {inside}
+# Payload SHA-256: {payload_sha256}  (checked before anything runs; python3 {filename} --inspect shows what is inside)
+import argparse, base64, hashlib, io, json, os, sys, tarfile, time, webbrowser, zipfile
 from pathlib import Path
 
+PAYLOAD_SHA256 = "{payload_sha256}"
 PAYLOAD = (
 {payload}
 )
+
+
+def inspect(blob):
+    z = zipfile.ZipFile(io.BytesIO(blob))
+    with tarfile.open(fileobj=io.BytesIO(z.read("snapshot.tar.gz"))) as t:
+        names = t.getnames()
+        state = json.load(t.extractfile("state.json"))
+        b = json.load(t.extractfile("bundle.json")) if "bundle.json" in names else None
+    print(f"payload   sha256 {{PAYLOAD_SHA256}} (verified)")
+    print(f"frozen    {{state.get('created')}}  brainstem {{state.get('brainstem', {{}}).get('version')}}  "
+          f"{{len(state.get('history', []))}} conversation messages")
+    if not b:
+        print("bundle    none (frozen before bundle.json)")
+        return
+    pin = b["kernel"]["pin"]
+    print(f"kernel    {{len(pin.get('files', {{}}))}} files pinned by {{b['kernel']['pinned_by']}}"
+          f"  {{pin.get('source') or ''}} {{(pin.get('commit') or '')[:12]}} v{{pin.get('version') or '?'}}")
+    for label, group in (("agents", "agents"), ("organs", "organs")):
+        files = b.get(group, {{}})
+        top = [Path(a).name for a in files if a.count("/") == 1 and a.endswith(".py")]
+        print(f"{{label:<9}} {{', '.join(top) or '-'}}  ({{len(files)}} files)")
+    for sc in b.get("sidecars", []):
+        f = sc.get("from", {{}})
+        print(f"sidecar   {{sc['name']}} ({{sc.get('kind')}}, {{len(sc.get('files', {{}}))}} files) from {{f.get('repo')}} @ {{(f.get('commit') or '')[:12]}}")
+    if b.get("parent"):
+        print(f"parent    {{json.dumps(b['parent'])}}")
+    print(f"signed    {{'yes (bundle.sig)' if 'bundle.sig' in names else 'no'}}")
 
 
 def main():
@@ -767,9 +887,19 @@ def main():
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--keep", action="store_true", help="leave it running when this script exits")
     ap.add_argument("--env", action="append", default=[], help="KEY=VALUE for agents that need settings")
+    ap.add_argument("--inspect", action="store_true", help="show what is inside, run nothing")
     a = ap.parse_args()
 
+    import signal
+    def _stop(*_):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, _stop)          # a stop from outside cleans up like Ctrl-C does
+    signal.signal(signal.SIGINT, _stop)           # even when started from a script that ignores Ctrl-C
     blob = base64.b64decode("".join(PAYLOAD))
+    if hashlib.sha256(blob).hexdigest() != PAYLOAD_SHA256:
+        sys.exit("Refusing to run: this file was changed after it was packed (payload SHA-256 does not match).")
+    if a.inspect:
+        return inspect(blob)
     home = Path(os.getenv("BRAINFREEZE_ROOT", Path.home() / ".brainfreeze"))
     unpacked = home / ".bootstrap" / hashlib.sha256(blob).hexdigest()[:16]
     if not (unpacked / "snapshot.tar.gz").exists():
@@ -780,6 +910,7 @@ def main():
 
     env = dict(kv.split("=", 1) for kv in a.env)
     print("Starting the brainstem...", flush=True)
+    sys.stdout.reconfigure(line_buffering=True)
     try:
         bs = Throwaway.thaw(unpacked / "snapshot.tar.gz", port=a.port, env=env, keep=True).up()
     except ThrowawayError as e:
@@ -789,6 +920,8 @@ def main():
     print(f"\\nRunning at {{bs.url}}  (brainstem {{bs.health().get('version', '?')}}, "
           f"agents: {{', '.join(bs.health().get('agents', [])) or 'none'}})")
     print(f"Conversation: {{len(bs.history)}} messages restored.")
+    for sc in getattr(bs, "sidecars", []):
+        print(f"Sidecar {{sc['name']}} at {{sc['url']}}")
     print(f"  In the browser: click Import and choose {{convo}}")
     if missing:
         print(f"  Agents may need these settings: {{', '.join(missing)}} (pass --env NAME=value)")
@@ -837,7 +970,14 @@ def pack(snapshot, out=None, title=None):
         pkg = Path(__file__).parent
         for f in sorted(pkg.glob("*.py")):
             z.write(f, f"brainfreeze/{f.name}")
+    import hashlib
+    payload_sha256 = hashlib.sha256(buf.getvalue()).hexdigest()
     b64 = base64.b64encode(buf.getvalue()).decode()
+    with tarfile.open(snapshot) as t:
+        b = json.load(t.extractfile("bundle.json")) if "bundle.json" in t.getnames() else {}
+    inside = (f"{len(b.get('agents', {}))} agents, {len(b.get('organs', {}))} organs, "
+              f"sidecars: {', '.join(sc['name'] for sc in b.get('sidecars', [])) or 'none'}, "
+              f"kernel pinned by {b['kernel']['pinned_by']}" if b else "no bundle.json")
     stem = snapshot.name[:-len(SNAPSHOT_SUFFIX)] if snapshot.name.endswith(SNAPSHOT_SUFFIX) else snapshot.stem
     out = Path(out) if out else snapshot.with_name(stem + ".brainstem.py")
     settings = state.get("settings_needed", [])
@@ -845,7 +985,7 @@ def pack(snapshot, out=None, title=None):
         title=title or f"Frozen brainstem: {stem}", filename=out.name, stem=stem,
         created=state.get("created", "?"), version=state.get("brainstem", {}).get("version", "?"),
         n_msgs=len(state.get("history", [])), settings=", ".join(settings) or "none",
-        settings_list=settings,
+        settings_list=settings, payload_sha256=payload_sha256, inside=inside,
         payload="\n".join(f'    "{b64[i:i + 100]}"' for i in range(0, len(b64), 100)))
     out.write_text(text)
     os.chmod(out, 0o755)
@@ -952,3 +1092,6 @@ def lay_egg(brainstem_dir, out_dir=".", owner=None, slug=None, rappid=None, incl
         laid["session"] = out_dir / f"{parts['owner']}--{parts['slug']}.session.egg"
         laid["session"].write_bytes(sblob)
     return laid
+
+
+from . import bundle  # noqa: E402,F401  (bundle.json: hashes, kernel pin, sidecars)

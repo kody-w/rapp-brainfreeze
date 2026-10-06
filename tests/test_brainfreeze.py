@@ -331,6 +331,80 @@ class LegacyEggTests(unittest.TestCase):
         self.assertIn("hologram cartridge", str(e.exception))
 
 
+class BundleTests(unittest.TestCase):
+    def _snap(self, name, **kw):
+        base = Path(tempfile.mkdtemp(dir=TMP))
+        src = make_brainstem(base)
+        side = base / "sidecar"
+        side.mkdir()
+        (side / "sidecar.json").write_text(json.dumps({"kind": "service", "run": ["{python}", "serve.py", "{port}"],
+                                                      "env": {"BRAINSTEM_URL": "{kernel_url}"}}))
+        (side / "serve.py").write_text("print('sidecar')\n")
+        if kw.get("pin"):
+            pin = {"schema": "ai-brainstem-kernel-pin/1", "files": {"brainstem.py": bf.bundle.sha256_file(src / "brainstem.py")}}
+            if kw["pin"] == "wrong":
+                pin["files"]["brainstem.py"] = "0" * 64
+            (src / "kernel.json").write_text(json.dumps(pin))
+        return src, bf.freeze(src, base / f"{name}.snapshot.tar.gz", sidecars=[side])
+
+    def _bundle(self, snap):
+        with tarfile.open(snap) as t:
+            return json.load(t.extractfile("bundle.json")), t.getnames()
+
+    def test_every_part_is_hashed_and_the_sidecar_travels(self):
+        _, snap = self._snap("plain")
+        b, names = self._bundle(snap)
+        self.assertEqual(b["schema"], "brainfreeze-bundle/1")
+        self.assertEqual(b["kernel"]["pinned_by"], "freeze")
+        self.assertIn("brainstem.py", b["kernel"]["pin"]["files"])
+        self.assertIn("agents/router_agent.py", b["agents"])
+        self.assertNotIn("agents/router_agent.py", b["kernel"]["pin"]["files"])
+        self.assertEqual(b["sidecars"][0]["path"], "sidecars/sidecar")
+        self.assertIn("sidecars/sidecar/serve.py", names)
+        self.assertFalse(any(".copilot_token" in n for n in names))
+
+    def test_a_distro_kernel_is_pinned_by_its_kernel_json(self):
+        _, snap = self._snap("distro", pin="right")
+        self.assertEqual(self._bundle(snap)[0]["kernel"]["pinned_by"], "kernel.json")
+
+    def test_a_distro_with_a_patched_kernel_is_not_frozen(self):
+        with self.assertRaises(bf.ThrowawayError) as e:
+            self._snap("patched", pin="wrong")
+        self.assertIn("kernel.json pin", str(e.exception))
+
+    def test_verify_names_the_changed_file(self):
+        _, snap = self._snap("verify")
+        root = Path(tempfile.mkdtemp(dir=TMP))
+        with tarfile.open(snap) as t:
+            t.extractall(root)
+        b = json.loads((root / "bundle.json").read_text())
+        bf.bundle.verify(root, b)                                    # untouched: passes
+        for rel, words in (("rapp_brainstem/brainstem.py", "kernel file brainstem.py"),
+                           ("rapp_brainstem/agents/router_agent.py", "agent file agents/router_agent.py"),
+                           ("sidecars/sidecar/serve.py", "sidecar sidecar file serve.py")):
+            p = root / rel
+            keep = p.read_bytes()
+            p.write_bytes(keep + b"#")
+            with self.assertRaises(bf.bundle.BundleError) as e:
+                bf.bundle.verify(root, b)
+            self.assertIn(words, str(e.exception))
+            p.write_bytes(keep)
+
+    def test_run_file_refuses_a_changed_payload_and_inspects(self):
+        import subprocess
+        _, snap = self._snap("runfile")
+        run = bf.pack(snap)
+        ok = subprocess.run([sys.executable, str(run), "--inspect"], capture_output=True, text=True)
+        self.assertIn("sidecar   sidecar", ok.stdout)
+        text = run.read_text()
+        i = text.index('PAYLOAD = (') + 40
+        while not text[i].isalnum():
+            i += 1
+        run.write_text(text[:i] + ("A" if text[i] != "A" else "B") + text[i + 1:])
+        bad = subprocess.run([sys.executable, str(run), "--inspect"], capture_output=True, text=True)
+        self.assertIn("changed after it was packed", bad.stderr)
+
+
 class LineageTests(unittest.TestCase):
     def test_parent_is_the_snapshot_or_egg_it_grew_from(self):
         tw = bf.Throwaway(name="lineage-test")
