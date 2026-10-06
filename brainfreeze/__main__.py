@@ -34,6 +34,14 @@ def main(argv=None):
     eg.add_argument("--no-session", action="store_true", help="do not lay a session egg")
     eg.add_argument("--out", default=".", help="folder to write the eggs to")
 
+    ug = sub.add_parser("egg-upgrade", help="say what an .egg file is, and turn an older brainstem egg into rapp/1")
+    ug.add_argument("egg", help="the .egg file or https URL")
+    ug.add_argument("--owner", help="your lowercase GitHub login (default: the publisher the egg names)")
+    ug.add_argument("--slug", help="lowercase-hyphen name (default: from the file name)")
+    ug.add_argument("--no-memory", action="store_true", help="leave the egg's memory out")
+    ug.add_argument("--check", action="store_true", help="only say what it is; write nothing")
+    ug.add_argument("--out", default=".", help="folder to write the rapp/1 egg to")
+
     fz = sub.add_parser("freeze", help="snapshot a running throwaway, or any brainstem folder")
     fz.add_argument("target", help="throwaway name, or a path to a rapp_brainstem folder")
     fz.add_argument("--out", help="snapshot file to write")
@@ -90,7 +98,12 @@ def main(argv=None):
                 out = a.out or f"brainstem-{_t.strftime('%Y%m%d-%H%M%S')}.snapshot.tar.gz"
                 snap = freeze(a.target, out)
             else:
-                snap = Throwaway.attach(a.target).freeze(a.out)
+                tw = Throwaway.attach(a.target)
+                snap = tw.freeze(a.out)
+                p = tw.parent()
+                if p:
+                    print(f"parent:   " + (f"snapshot {p['snapshot_sha256'][:16]} ({p.get('snapshot')})"
+                                           if "snapshot_sha256" in p else f"egg {p['egg_address'][:16]}"))
             print(f"snapshot: {snap}")
             if a.run_file:
                 print(f"run file: {pack(snap)}")
@@ -109,6 +122,24 @@ def main(argv=None):
             print(f"rappid:   {laid['rappid']}\naddress:  {laid['address']}")
             if laid["left_out"]:
                 print(f"left out (invalid egg paths): {', '.join(laid['left_out'][:10])}")
+        elif a.cmd == "egg-upgrade":
+            from pathlib import Path
+            from . import _fetch, legacy
+            blob = _fetch(a.egg)
+            info = legacy.identify(blob)
+            print(f"this is:  {info['what']}  ({info['format']})")
+            if a.check or not info["convertible"]:
+                print(f"next:     {info['hint']}")
+                return 0 if info["convertible"] or info["format"].startswith("rapp/1") or a.check else 1
+            stem = Path(a.egg.rstrip("/").split("/")[-1]).name
+            stem = stem[:-4] if stem.endswith(".egg") else stem
+            laid, notes = legacy.upgrade(blob, a.out, owner=a.owner, slug=a.slug, name_hint=stem,
+                                         include_memory=not a.no_memory)
+            print(f"organism: {laid['organism']}  ({laid['files']} files, verified rapp/1)")
+            print(f"rappid:   {laid['rappid']}")
+            for n in notes:
+                print(f"note:     {n}")
+            print(f"next:     brainfreeze up --egg {laid['organism']}")
         elif a.cmd == "pack":
             print(f"run file: {pack(a.snapshot, a.out)}")
         elif a.cmd == "replay":

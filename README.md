@@ -45,6 +45,14 @@ in the middle of a conversation, that you can drop in and share. For example:
 | Chosen model | |
 | Conversation and session id | |
 
+A snapshot of a throwaway also records its **parent**: the SHA-256 of the snapshot it was thawed from, or
+the address of the egg it hatched from. Re-freezing after a change makes a child that points at the exact
+freeze it came from (`state.json` → `parent`).
+
+Throwaways started at the same moment never share a port: each one reserves its port atomically
+(`$BRAINFREEZE_ROOT/.ports/<port>`) before it starts, and a reservation left by a process that is gone is
+taken over.
+
 The brainstem keeps nothing important only in the running process, so freezing the disk state and the
 conversation is a full freeze. The web UI keeps the conversation in the browser. A resumed brainstem
 writes it in the UI's Import format, so one click on **Import** restores it on screen.
@@ -84,6 +92,7 @@ python3 -m brainfreeze freeze tw-7097 --run-file               # freeze a throwa
 python3 -m brainfreeze pack demo.snapshot.tar.gz               # snapshot -> self-bootstrapping .py
 python3 -m brainfreeze egg tw-7097 --owner you --slug my-desk  # rapp/1 organism egg (+ session egg)
 python3 -m brainfreeze up --egg you--my-desk.egg               # hatch an egg onto the grail engine it expects
+python3 -m brainfreeze egg-upgrade old.egg                     # say what an .egg is; convert older brainstem eggs
 python3 -m brainfreeze list
 python3 -m brainfreeze down tw-7097                            # or: down all
 ```
@@ -126,6 +135,24 @@ and records the egg it `grown_from`. The reference implementation is vendored ve
 | Engine code | Included, exactly as it ran | Never included; hatches onto the receiver's engine |
 | Conversation | Included | Optional separate `session` egg |
 | Format | `.snapshot.tar.gz` / self-bootstrapping `.brainstem.py` | rapp/1 `organism` + `session` eggs |
+
+### Older eggs
+
+Several tools laid `.egg` files before rapp/1, and other projects use the extension for things that are
+not brainstems. `egg-upgrade` says what a file is and converts the brainstem-shaped ones into verified
+rapp/1 organism eggs; hatching a wrong file names what it is instead of failing to parse it.
+
+| Format | What it is | `egg-upgrade` |
+|---|---|---|
+| `brainstem-egg/2.1` twin, `2.2-rapplication`, `2.3-cubby` | Older brainstem exports | Converts soul, agents and memory (old `{"facts": [...]}` memory becomes brainstem memory); engine, UI and data folders are left out and listed |
+| `rapp-egg/1.0` rapplication | One agent plus a web UI | Converts the agent with a written soul; for the agent plus its UI use `brainfreeze-studio rapplication` |
+| `rapp-application/1.0` twin | A twin with a soul and agents | Converts soul and agents |
+| `hologram-cartridge`, Rappter moments and genomes, neighborhood invites, Claude Code agent bundles | Not brainstems | Named, with where to open them |
+
+```bash
+python3 -m brainfreeze egg-upgrade ~/Downloads/grandma-rose.egg --check    # what is it?
+python3 -m brainfreeze egg-upgrade ~/Downloads/grandma-rose.egg --out eggs/ # -> eggs/<owner>--grandma-rose.egg
+```
 
 ## Handoff kits
 

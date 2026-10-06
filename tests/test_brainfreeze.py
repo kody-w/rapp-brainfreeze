@@ -247,5 +247,128 @@ class VendorTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256((pkg / "rapp1.py").read_bytes()).hexdigest(), meta["sha256"])
 
 
+def _zip(files):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for n, data in files.items():
+            z.writestr(n, data if isinstance(data, (bytes, str)) else json.dumps(data))
+    return buf.getvalue()
+
+
+class LegacyEggTests(unittest.TestCase):
+    AGENT = "class XAgent: pass\n"
+    EGGS = {
+        "twin": {"manifest.json": {"schema": "brainstem-egg/2.1", "type": "twin",
+                                   "rappid": "rappid:twin:@source/kody-w:98b6c7fecd5af68e"},
+                 "repo/soul.md": "You are a twin.\n", "repo/brainstem.py": "engine\n",
+                 "repo/agents/context_memory_agent.py": AGENT,
+                 "data/memory.json": {"facts": ["I like single-file agents."]}},
+        "rapplication": {"manifest.json": {"schema": "rapp-egg/1.0", "type": "rapplication", "id": "bookfactory",
+                                           "agent_filename": "bookfactory_agent.py"},
+                         "agent.py": AGENT, "ui/index.html": "<html></html>"},
+        "rapplication22": {"manifest.json": {"schema": "brainstem-egg/2.2-rapplication", "type": "rapplication",
+                                             "publisher": "@kody-w", "name": "Deploy"},
+                           "agents/deploy_agent.py": AGENT, "rapp_ui/deploy/index.html": "<html></html>"},
+        "cubby": {"manifest.json": {"schema": "brainstem-egg/2.3-cubby", "type": "cubby", "slug": "demo"},
+                  "cubby/agents/a_agent.py": AGENT, "cubby/agents/b_agent.py": AGENT, "cubby/transcript.txt": "t"},
+        "application": {"manifest.json": {"schema": "rapp-application/1.0", "id": "cook", "publisher": "@kody-w",
+                                          "runtime": "twin", "twin": {"soul": "twin/soul.md",
+                                                                      "agents": ["twin/agents/cook_agent.py"]}},
+                        "twin/soul.md": "You cook.\n", "twin/agents/cook_agent.py": AGENT,
+                        "twin/recipes/index.json": "{}"},
+    }
+
+    def test_older_brainstem_eggs_convert_to_verified_rapp1(self):
+        from brainfreeze import legacy, rapp1
+        for name, files in self.EGGS.items():
+            with self.subTest(name):
+                blob = _zip(files)
+                self.assertTrue(legacy.identify(blob)["convertible"])
+                out = Path(TMP) / "upgraded" / name
+                laid, notes = legacy.upgrade(blob, out, owner="kody-w", name_hint=name)
+                egg = laid["organism"].read_bytes()
+                self.assertTrue(rapp1.verify_egg(egg)[0])
+                manifest, got = rapp1.read_egg(egg)
+                self.assertEqual(manifest["variant"], "organism")
+                self.assertIn("soul.md", got)
+                self.assertTrue(any(p.startswith("agents/") and p.endswith("_agent.py") for p in got))
+                self.assertFalse(any("brainstem.py" in p or p.startswith(("ui/", "rapp_ui/")) for p in got))
+
+    def test_old_memory_facts_become_brainstem_memory(self):
+        from brainfreeze import legacy, rapp1
+        laid, _ = legacy.upgrade(_zip(self.EGGS["twin"]), Path(TMP) / "upgraded-mem", owner="kody-w")
+        _, got = rapp1.read_egg(laid["organism"].read_bytes())
+        mem = json.loads(got[".brainstem_data/shared_memories/memory.json"])
+        self.assertEqual([m["message"] for m in mem.values()], ["I like single-file agents."])
+
+    def test_non_brainstems_are_named_not_parsed_at(self):
+        from brainfreeze import legacy
+        cases = {
+            b'{"schema": "hologram-cartridge/1.0", "title": "Arachne", "x": 1.5}': "hologram cartridge",
+            b'{"format": "holographic-moment-egg/1.0", "moment": {}, "exported": "x"}': "Rappter moment",
+            base64.b64encode(b'{"genome": {"layers": []}}'): "Rappter creature genome",
+            _zip({"manifest.json": {"contents": []}, ".claude/agents/a.md": "x"}): "Claude Code agents",
+            b"not an egg at all": "not a ZIP or JSON",
+        }
+        for blob, words in cases.items():
+            with self.subTest(words):
+                info = legacy.identify(blob)
+                self.assertFalse(info["convertible"])
+                self.assertIn(words, info["what"])
+
+    def test_hatch_names_what_a_wrong_file_is(self):
+        p = Path(TMP) / "cartridge.egg"
+        p.write_bytes(b'{"schema": "hologram-cartridge/1.0", "title": "Arachne", "x": 1.5}')
+        with self.assertRaises(bf.ThrowawayError) as e:
+            bf.Throwaway.hatch(p)
+        self.assertIn("hologram cartridge", str(e.exception))
+
+
+class LineageTests(unittest.TestCase):
+    def test_parent_is_the_snapshot_or_egg_it_grew_from(self):
+        tw = bf.Throwaway(name="lineage-test")
+        tw.dir.mkdir(parents=True, exist_ok=True)
+        self.assertIsNone(tw.parent())
+        (tw.dir / "instance.json").write_text(json.dumps({"grown_from": "ab" * 32, "artifact": "rappid:x"}))
+        self.assertEqual(tw.parent(), {"egg_address": "ab" * 32, "rappid": "rappid:x"})
+        (tw.dir / "parent.json").write_text(json.dumps({"snapshot_sha256": "cd" * 32, "snapshot": "a.tar.gz"}))
+        self.assertEqual(tw.parent()["snapshot_sha256"], "cd" * 32)
+
+
+class PortReservationTests(unittest.TestCase):
+    PORT = 7987
+
+    def tearDown(self):
+        bf._release_port(self.PORT)
+
+    def test_one_owner_per_port(self):
+        self.assertTrue(bf._reserve_port(self.PORT))
+        self.assertFalse(bf._reserve_port(self.PORT))       # a second throwaway in this process
+        bf._release_port(self.PORT)
+        self.assertTrue(bf._reserve_port(self.PORT))
+
+    def test_parallel_threads_get_distinct_ports(self):
+        import threading
+        won, lock = [], threading.Lock()
+
+        def grab():
+            if bf._reserve_port(self.PORT):
+                with lock:
+                    won.append(1)
+        threads = [threading.Thread(target=grab) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(len(won), 1)
+
+    def test_stale_reservation_is_taken_over(self):
+        mark = bf.ROOT / ".ports" / str(self.PORT)
+        mark.mkdir(parents=True, exist_ok=True)
+        (mark / "pid").write_text("999999")                  # an owner that no longer exists
+        self.assertTrue(bf._reserve_port(self.PORT))
+        self.assertEqual((mark / "pid").read_text(), str(os.getpid()))
+
+
 if __name__ == "__main__":
     unittest.main()
