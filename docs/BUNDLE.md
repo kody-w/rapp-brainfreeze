@@ -1,6 +1,6 @@
 # bundle.json — what a frozen brainstem carries, pinned by hash
 
-Status: draft 1 (6 Oct 2026). Schema id `brainfreeze-bundle/1`.
+Status: draft 1, implemented (6 Oct 2026). Schema id `brainfreeze-bundle/1`.
 
 A snapshot (and the one-file `.brainstem.py` made from it) carries a `bundle.json` beside `state.json`. It lists
 every part of the frozen brainstem by SHA-256 and says how to bring the add-ons up around the kernel. A thaw
@@ -60,7 +60,7 @@ The three userland routes map onto it directly:
 
 ## Signing (`bundle.sig`)
 
-`bundle.json` is signed with an SSH key (`ssh-keygen -Y sign -n brainfreeze`), the same keys GitHub already
+`bundle.json` is signed with an SSH key (`ssh-keygen -Y sign -n brainfreeze`; the signature is `bundle.sig`, the signer's login `bundle.signer`), the same keys GitHub already
 publishes at `https://github.com/<login>.keys`. A signature names its signer as a GitHub login; a reader checks it
 against that login's published keys (or a local `allowed_signers`), with nothing new to install. Because
 `bundle.json` hashes every file, one signature covers the whole brainstem.

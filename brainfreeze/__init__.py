@@ -389,7 +389,7 @@ class Throwaway:
             for member in tar.getmembers():
                 name = member.name
                 if (name.startswith("/") or ".." in Path(name).parts or member.issym() or member.islnk()
-                        or not (name in ("state.json", "bundle.json", "bundle.sig")
+                        or not (name in ("state.json", "bundle.json", "bundle.sig", "bundle.signer")
                                 or name.startswith(("rapp_brainstem", "sidecars/")) or name == "sidecars")):
                     raise ThrowawayError(f"snapshot has an unsafe entry: {name}")
             tar.extractall(self.dir)
@@ -401,6 +401,16 @@ class Throwaway:
                 _bundle.verify(self.dir, self.bundle)
             except _bundle.BundleError as e:
                 raise ThrowawayError(f"refusing to start: {e}")
+        self.signature = None
+        if (self.dir / "bundle.sig").is_file():
+            from . import lineage
+            allowed = os.getenv("BRAINFREEZE_ALLOWED_SIGNERS") or str(ROOT / "allowed_signers")
+            status, login, why = lineage.check_signature(snapshot.read_bytes(), allowed)
+            if status == "bad":
+                raise ThrowawayError(f"refusing to start: the signature by {login} does not match ({why})")
+            self.signature = {"status": status, "signer": login, "detail": why}
+            if status != "verified":
+                print(f"warning: signed as {login}, but the signature could not be checked: {why}", file=sys.stderr)
         state = json.loads((self.dir / "state.json").read_text())
         self.history = state.get("history", [])
         self.session_id = state.get("session_id")
@@ -877,7 +887,7 @@ def inspect(blob):
         print(f"sidecar   {{sc['name']}} ({{sc.get('kind')}}, {{len(sc.get('files', {{}}))}} files) from {{f.get('repo')}} @ {{(f.get('commit') or '')[:12]}}")
     if b.get("parent"):
         print(f"parent    {{json.dumps(b['parent'])}}")
-    print(f"signed    {{'yes (bundle.sig)' if 'bundle.sig' in names else 'no'}}")
+
 
 
 def main():
@@ -888,6 +898,8 @@ def main():
     ap.add_argument("--keep", action="store_true", help="leave it running when this script exits")
     ap.add_argument("--env", action="append", default=[], help="KEY=VALUE for agents that need settings")
     ap.add_argument("--inspect", action="store_true", help="show what is inside, run nothing")
+    ap.add_argument("--update", metavar="CATALOG", help="a folder or index.json URL: show newer versions of this brainstem")
+    ap.add_argument("--allowed-signers", help="an allowed_signers file for checking signatures")
     a = ap.parse_args()
 
     import signal
@@ -898,8 +910,35 @@ def main():
     blob = base64.b64decode("".join(PAYLOAD))
     if hashlib.sha256(blob).hexdigest() != PAYLOAD_SHA256:
         sys.exit("Refusing to run: this file was changed after it was packed (payload SHA-256 does not match).")
+    if a.inspect or a.update:
+        home_ = Path(os.getenv("BRAINFREEZE_ROOT", Path.home() / ".brainfreeze"))
+        unpacked_ = home_ / ".bootstrap" / hashlib.sha256(blob).hexdigest()[:16]
+        if not (unpacked_ / "snapshot.tar.gz").exists():
+            unpacked_.mkdir(parents=True, exist_ok=True)
+            zipfile.ZipFile(io.BytesIO(blob)).extractall(unpacked_)
+        sys.path.insert(0, str(unpacked_))
+        from brainfreeze import lineage
+        own = zipfile.ZipFile(io.BytesIO(blob)).read("snapshot.tar.gz")
+        allowed = a.allowed_signers or os.getenv("BRAINFREEZE_ALLOWED_SIGNERS") or str(home_ / "allowed_signers")
     if a.inspect:
-        return inspect(blob)
+        inspect(blob)
+        status, login, why = lineage.check_signature(own, allowed)
+        print(f"signature {{status}}" + (f" as {{login}} ({{why}})" if login else ""))
+        return
+    if a.update:
+        found = lineage.find_updates(own, a.update)
+        if not found:
+            print(f"No newer version of this brainstem in {{a.update}}.")
+            return
+        prev = own
+        for name, data, depth in found:
+            status, login, why = lineage.check_signature(data, allowed)
+            print(f"{{'  ' * (depth - 1)}}newer: {{name}}  (generation +{{depth}}, signature {{status}}"
+                  + (f" as {{login}}" if login else "") + ")")
+            for line in lineage.describe_change(prev, data):
+                print(f"{{'  ' * (depth - 1)}}  - {{line}}")
+            prev = data
+        return
     home = Path(os.getenv("BRAINFREEZE_ROOT", Path.home() / ".brainfreeze"))
     unpacked = home / ".bootstrap" / hashlib.sha256(blob).hexdigest()[:16]
     if not (unpacked / "snapshot.tar.gz").exists():
@@ -1094,4 +1133,4 @@ def lay_egg(brainstem_dir, out_dir=".", owner=None, slug=None, rappid=None, incl
     return laid
 
 
-from . import bundle  # noqa: E402,F401  (bundle.json: hashes, kernel pin, sidecars)
+from . import bundle, lineage  # noqa: E402,F401  (bundle.json: hashes, kernel pin, sidecars; signing, lineage)

@@ -51,6 +51,13 @@ checks every hash before anything starts and refuses on the first changed file, 
 its own payload, so a single changed byte stops it. Service sidecars start beside the kernel on their own port and
 stop with it.
 
+**Signed and versioned.** `sign` signs `bundle.json` (and so every file) with an SSH key as a GitHub login;
+`verify` and every thaw check it against an `allowed_signers` file (`$BRAINFREEZE_ALLOWED_SIGNERS`, or
+`$BRAINFREEZE_ROOT/allowed_signers`) or, failing that, the login's keys at `github.com/<login>.keys`. A signature
+that does not match stops the thaw. `--update <catalog>` on a run file follows `parent` links through a folder or
+an `index.json` URL and prints each newer version with its signer and what changed (agents, soul, memory, kernel,
+sidecars).
+
 A snapshot of a throwaway also records its **parent**: the SHA-256 of the snapshot it was thawed from, or
 the address of the egg it hatched from. Re-freezing after a change makes a child that points at the exact
 freeze it came from (`state.json` → `parent`).
@@ -101,6 +108,9 @@ python3 -m brainfreeze up --egg you--my-desk.egg               # hatch an egg on
 python3 -m brainfreeze egg-upgrade old.egg                     # say what an .egg is; convert older brainstem eggs
 python3 -m brainfreeze freeze ~/my-distro --with ~/brainstem-mcp --run-file   # bundle a sidecar; kernel pinned
 python3 demo.brainstem.py --inspect                            # what is inside, checked, without running it
+python3 -m brainfreeze sign demo.snapshot.tar.gz --as <login> --run-file   # sign bundle.json with your SSH key
+python3 -m brainfreeze verify demo.brainstem.py                # hashes + signature
+python3 demo.brainstem.py --update ~/catalog                   # newer versions of this brainstem, and what changed
 python3 -m brainfreeze list
 python3 -m brainfreeze down tw-7097                            # or: down all
 ```
