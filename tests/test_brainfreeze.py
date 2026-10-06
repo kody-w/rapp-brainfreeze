@@ -405,6 +405,54 @@ class BundleTests(unittest.TestCase):
         self.assertIn("changed after it was packed", bad.stderr)
 
 
+class SignAndUpdateTests(unittest.TestCase):
+    def setUp(self):
+        import subprocess
+        self.base = Path(tempfile.mkdtemp(dir=TMP))
+        self.key = self.base / "key"
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "test", "-f", str(self.key)], check=True)
+        self.allowed = self.base / "allowed_signers"
+        pub = " ".join((self.base / "key.pub").read_text().split()[:2])
+        self.allowed.write_text(f'tester namespaces="brainfreeze" {pub}\n')
+        self.src = make_brainstem(self.base)
+        self.catalog = self.base / "catalog"
+        self.catalog.mkdir()
+
+    def test_sign_verify_and_reject_an_edit(self):
+        snap = bf.freeze(self.src, self.catalog / "v1.snapshot.tar.gz")
+        bf.lineage.sign(snap, self.key, "tester")
+        data = snap.read_bytes()
+        self.assertEqual(bf.lineage.check_signature(data, self.allowed)[0], "verified")
+        # a different signer name than the allowed key's
+        bf.lineage.sign(snap, self.key, "someone-else", out=self.base / "other.snapshot.tar.gz")
+        self.assertNotEqual(bf.lineage.check_signature((self.base / "other.snapshot.tar.gz").read_bytes(), self.allowed)[0], "verified")
+        # bundle.json edited after signing
+        out = io.BytesIO()
+        with tarfile.open(fileobj=io.BytesIO(data)) as t, tarfile.open(fileobj=out, mode="w:gz") as o:
+            for m in t.getmembers():
+                body = t.extractfile(m).read() if m.isfile() else None
+                if m.name == "bundle.json":
+                    body = body.replace(b"brainfreeze-bundle/1", b"brainfreeze-bundle/9")
+                    m.size = len(body)
+                o.addfile(m, io.BytesIO(body) if body is not None else None)
+        self.assertEqual(bf.lineage.check_signature(out.getvalue(), self.allowed)[0], "bad")
+
+    def test_update_finds_children_and_says_what_changed(self):
+        v1 = bf.freeze(self.src, self.catalog / "v1.snapshot.tar.gz")
+        (self.src / "agents" / "new_agent.py").write_text("class NewAgent: pass\n")
+        (self.src / ".brainstem_data" / "shared_memories" / "memory.json").write_text('{"limit": 10000, "more": 1}')
+        parent = {"snapshot_sha256": bf.lineage.sha256(v1.read_bytes())}
+        v2 = bf.freeze(self.src, self.catalog / "v2.snapshot.tar.gz", extra={"parent": parent})
+        bf.pack(v2)                                                      # the same v2 as a run file: counted once
+        found = bf.lineage.find_updates(v1.read_bytes(), self.catalog)
+        self.assertEqual([(n, d) for n, _, d in found], [("v2.brainstem.py", 1)] if found[0][0].endswith(".py")
+                         else [("v2.snapshot.tar.gz", 1)])
+        change = bf.lineage.describe_change(v1.read_bytes(), found[0][1])
+        self.assertIn("agents added: new_agent.py", change)
+        self.assertIn("memory: 1 -> 2 entries", change)
+        self.assertEqual(bf.lineage.find_updates(v2.read_bytes(), self.catalog), [])
+
+
 class LineageTests(unittest.TestCase):
     def test_parent_is_the_snapshot_or_egg_it_grew_from(self):
         tw = bf.Throwaway(name="lineage-test")
