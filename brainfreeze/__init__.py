@@ -90,6 +90,39 @@ def _port_busy(port):
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
+def _reserve_port(port):
+    """Claim a port for this process atomically (mkdir), so throwaways started at the same moment never pick
+    the same one. A reservation whose owner process is gone and whose port is free is stale and is taken over."""
+    marks = ROOT / ".ports"
+    marks.mkdir(parents=True, exist_ok=True)
+    mark = marks / str(port)
+    for _ in range(2):
+        try:
+            mark.mkdir()
+        except FileExistsError:
+            owner = int(_read(mark / "pid", "0") or 0)
+            if owner == os.getpid() or _alive(owner) or _port_busy(port):
+                return False
+            shutil.rmtree(mark, ignore_errors=True)
+            continue
+        (mark / "pid").write_text(str(os.getpid()))
+        return True
+    return False
+
+
+def _release_port(port):
+    shutil.rmtree(ROOT / ".ports" / str(port), ignore_errors=True)
+
+
+def _sha256_file(path):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def _hold(*args):
     if HOLDS.exists():
         subprocess.run(["bash", str(HOLDS), *args], capture_output=True)
@@ -194,9 +227,9 @@ class Throwaway:
         ROOT.mkdir(parents=True, exist_ok=True)
         if self.port is None:
             self.port = FIRST_PORT
-            while _port_busy(self.port) or (ROOT / f"tw-{self.port}").exists():
+            while _port_busy(self.port) or (ROOT / f"tw-{self.port}").exists() or not _reserve_port(self.port):
                 self.port += 1
-        elif _port_busy(self.port):
+        elif _port_busy(self.port) or not _reserve_port(self.port):
             raise ThrowawayError(f"port {self.port} is already in use")
         self.name = self.name or f"tw-{self.port}"
         if self.dir.exists():
@@ -213,7 +246,10 @@ class Throwaway:
 
     def _fetch_source(self):
         if Path(self.source).expanduser().is_file():   # a snapshot, whatever it is named
-            self._thaw_into(Path(self.source).expanduser())
+            snap = Path(self.source).expanduser()
+            self._thaw_into(snap)
+            (self.dir / "parent.json").write_text(json.dumps({"snapshot_sha256": _sha256_file(snap),
+                                                              "snapshot": snap.name}, indent=2))
         elif self.source in SOURCES:
             subprocess.run(["git", "clone", "-q", "--depth", "1", SOURCES[self.source], str(self.dir)],
                            check=True)
@@ -349,6 +385,10 @@ class Throwaway:
         blob = _fetch(egg)
         ok, step, why = rapp1.verify_egg(blob)
         if not ok:
+            from . import legacy
+            info = legacy.identify(blob)
+            if info["format"] != "unknown":
+                raise ThrowawayError(f"this is {info['what']} ({info['format']}), not a rapp/1 egg; {info['hint']}")
             raise ThrowawayError(f"egg failed verification at {step}: {why}")
         manifest, files = rapp1.read_egg(blob)
         if manifest["variant"] != "organism":
@@ -408,10 +448,23 @@ class Throwaway:
         return path
 
     def freeze(self, out=None):
-        """Snapshot this running throwaway, conversation included."""
+        """Snapshot this running throwaway, conversation included. The snapshot names its parent: the snapshot
+        this throwaway was thawed from (by SHA-256), or the egg it hatched from."""
         out = out or Path.cwd() / f"{self.name}-{time.strftime('%Y%m%d-%H%M%S')}{SNAPSHOT_SUFFIX}"
         return freeze(self.brainstem_dir, out, history=self.history, session_id=self.session_id,
-                      model=self.health().get("model"))
+                      model=self.health().get("model"), extra={"parent": self.parent()})
+
+    def parent(self):
+        """What this throwaway grew from: {"snapshot_sha256", "snapshot"}, {"egg_address", "rappid"}, or None."""
+        try:
+            return json.loads((self.dir / "parent.json").read_text())
+        except (OSError, ValueError):
+            pass
+        try:
+            inst = json.loads((self.dir / "instance.json").read_text())
+            return {"egg_address": inst["grown_from"], "rappid": inst["artifact"]}
+        except (OSError, ValueError, KeyError):
+            return None
 
     @classmethod
     def from_kit(cls, kit, **overrides):
@@ -447,6 +500,7 @@ class Throwaway:
                     pass
         if self.port:
             _hold("release", f"port:{self.port}")
+            _release_port(self.port)
         if self.name and self.dir.exists() and self.dir.parent == ROOT:
             shutil.rmtree(self.dir)
         self._pid = None
