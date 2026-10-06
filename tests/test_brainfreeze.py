@@ -294,6 +294,13 @@ class LegacyEggTests(unittest.TestCase):
                 self.assertTrue(any(p.startswith("agents/") and p.endswith("_agent.py") for p in got))
                 self.assertFalse(any("brainstem.py" in p or p.startswith(("ui/", "rapp_ui/")) for p in got))
 
+    def test_owner_comes_from_the_publisher_never_the_twin_name(self):
+        from brainfreeze import legacy
+        self.assertIsNone(legacy.default_owner(_zip(self.EGGS["twin"])))          # @source/<twin> is not an owner
+        self.assertEqual(legacy.default_owner(_zip(self.EGGS["application"])), "kody-w")
+        with self.assertRaises(bf.ThrowawayError):
+            legacy.upgrade(_zip(self.EGGS["twin"]), Path(TMP) / "no-owner")
+
     def test_old_memory_facts_become_brainstem_memory(self):
         from brainfreeze import legacy, rapp1
         laid, _ = legacy.upgrade(_zip(self.EGGS["twin"]), Path(TMP) / "upgraded-mem", owner="kody-w")

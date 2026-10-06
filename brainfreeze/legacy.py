@@ -213,11 +213,13 @@ def default_owner(blob):
         m = _zip_manifest(z) or {}
     except zipfile.BadZipFile:
         return None
-    for v in (m.get("publisher"), m.get("rappid")):
-        hit = re.search(r"@(?:source/)?([A-Za-z0-9-]+)", str(v or ""))
-        if hit:
-            return hit.group(1).lower()
-    return None
+    hit = re.fullmatch(r"@?([A-Za-z0-9-]+)", str(m.get("publisher") or "").strip())
+    if hit:
+        return hit.group(1).lower()
+    # rapp/1-style ids name the owner (rappid:@owner/slug:...); the older "rappid:twin:@source/<twin>:..." ids
+    # name the twin, not its owner, so they are not used.
+    hit = re.match(r"rappid:@([A-Za-z0-9-]+)/", str(m.get("rappid") or ""))
+    return hit.group(1).lower() if hit else None
 
 
 def upgrade(blob, out_dir, owner=None, slug=None, name_hint="egg", include_memory=True):
