@@ -206,3 +206,18 @@ python3 -m unittest discover -s tests -v    # offline: freeze, pack, safety chec
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Factory reset, with the old self kept asleep
+
+```bash
+python3 -m brainfreeze factory-reset --plan     # look only: what a reset would touch
+python3 -m brainfreeze factory-reset            # freeze + prove a twin wakes; changes nothing
+python3 -m brainfreeze factory-reset --yes      # then stop it, move its home aside, install fresh
+python3 -m brainfreeze factory-undo <receipt>   # put the old home back
+```
+
+The snapshot (never sign-in or secrets) is written outside the home and proven first: every file
+it should carry is byte-identical, and a throwaway twin woken from it answers. Only then, and only
+with `--yes`, is the home moved aside (never deleted) and a fresh brainstem installed. A failed
+install puts the old home back. The receipt names the snapshot, the old home, the command that
+wakes a twin with the old data, and the undo. See `brainfreeze/reset.py`.

@@ -61,6 +61,19 @@ def main(argv=None):
     fz.add_argument("--with", dest="sidecars", action="append", default=[],
                     help="a sidecar folder to bundle and start beside the kernel (repeatable; see docs/BUNDLE.md)")
 
+    fr = sub.add_parser("factory-reset", help="freeze an installed brainstem, prove the snapshot wakes, "
+                                               "then (only with --yes) move its home aside and install a fresh one")
+    fr.add_argument("--home", default="~/.brainstem", help="the installed brainstem's home (default ~/.brainstem)")
+    fr.add_argument("--port", type=int, default=7071)
+    fr.add_argument("--installer", help="installer script path or URL (default: chosen from where the brainstem came from)")
+    fr.add_argument("--out", help="folder for the snapshot and receipt (default ~/.brainfreeze/resets/<time>)")
+    fr.add_argument("--yes", action="store_true", help="do the reset. Without it: freeze and prove only, nothing changes")
+    fr.add_argument("--no-wake", action="store_true", help="skip waking a twin from the snapshot (files are still compared)")
+    fr.add_argument("--plan", action="store_true", help="only show what a reset would touch")
+
+    fu = sub.add_parser("factory-undo", help="put the old home back from a factory-reset receipt")
+    fu.add_argument("receipt")
+
     pk = sub.add_parser("pack", help="turn a snapshot into a self-bootstrapping .py")
     pk.add_argument("snapshot")
     pk.add_argument("--out")
@@ -193,6 +206,19 @@ def main(argv=None):
         elif a.cmd == "replay":
             env = dict(kv.split("=", 1) for kv in a.env)
             print(f"report: {replay(a.kit, out=a.out, env=env)}")
+        elif a.cmd == "factory-reset":
+            import json as _json
+            from . import reset as _reset
+            if a.plan:
+                print(_json.dumps(_reset.plan(a.home, a.port), indent=1))
+            else:
+                r = _reset.factory_reset(a.home, a.port, installer=a.installer, out=a.out, yes=a.yes, wake=not a.no_wake)
+                print(f"wake a twin with the old data, if needed:\n  {r['wake']}")
+                if r["reset"]:
+                    print(f"undo:\n  {r['undo']}")
+        elif a.cmd == "factory-undo":
+            from . import reset as _reset
+            _reset.undo(a.receipt)
         elif a.cmd == "down":
             for n in down(a.name):
                 print(f"removed {n}")
