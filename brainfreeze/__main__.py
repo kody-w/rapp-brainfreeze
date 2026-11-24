@@ -7,6 +7,9 @@ from . import Throwaway, ThrowawayError, down, freeze, lay_egg, list_throwaways,
 
 
 def main(argv=None):
+    if (sys.argv[1:2] if argv is None else list(argv)[:1]) == ["host"]:      # wake inside an AI: see host.py
+        from . import host
+        return host.main(sys.argv[2:] if argv is None else list(argv)[1:])
     p = argparse.ArgumentParser(prog="brainfreeze",
                                 description="Disposable RAPP brainstems beside the real one.")
     sub = p.add_subparsers(dest="cmd", required=True)

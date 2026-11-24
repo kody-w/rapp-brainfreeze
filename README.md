@@ -117,6 +117,26 @@ python3 -m brainfreeze down tw-7097                            # or: down all
 
 `pip install -e .` adds a `brainfreeze` command.
 
+## Wake it inside any AI
+
+A normal thaw starts a server, sets up packages and asks for a Copilot sign-in. An AI that can run Python in
+its own sandbox needs none of that: it can be the model itself. `host` wakes a snapshot in the current folder,
+runs the brainstem's real `/chat` in-process with no port and no network, and hands each model question to
+whoever is driving.
+
+```bash
+python3 -m brainfreeze host thaw demo.snapshot.tar.gz    # every hash checked, then awake here
+python3 -m brainfreeze host tools                        # the agents on offer
+python3 -m brainfreeze host ask "What did we decide?"    # prints what the model must answer
+python3 -m brainfreeze host answer '{"tool_calls": [{"function": {"name": "InvoiceRouter", "arguments": {}}}]}'
+python3 -m brainfreeze host answer "Here is what the agent found: ..."
+python3 -m brainfreeze host freeze later.snapshot.tar.gz # a child snapshot: `parent` is the one it woke from
+```
+
+The engine file is never changed: its two model calls are swapped in memory for the turn and put back. An
+agent round that already ran is never run twice. `host` installs nothing, so the packages the engine imports
+must already be importable. The child snapshot is a standard one: `up --snapshot` resumes it on a real machine.
+
 ## Eggs: brainstems for the registry
 
 A snapshot is an exact clone, engine included, for private hand-offs. For publishing, brainfreeze lays a
