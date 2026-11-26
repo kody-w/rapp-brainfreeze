@@ -2,7 +2,6 @@
 import argparse
 import json
 import sys
-from pathlib import Path
 
 from . import Throwaway, ThrowawayError, down, freeze, lay_egg, list_throwaways, pack, replay
 
@@ -59,7 +58,7 @@ def main(argv=None):
 
     mh = sub.add_parser("memory-home", help="add what a Brainstem remembered elsewhere (a chat file's memory) to one here")
     mh.add_argument("chat_file")
-    mh.add_argument("brainstem_dir", nargs="?", default=str(Path.home() / ".brainstem" / "src" / "rapp_brainstem"))
+    mh.add_argument("brainstem_dir", help="the Brainstem folder to add to (the one with soul.md); never guessed")
     fz = sub.add_parser("freeze", help="snapshot a running throwaway, or any brainstem folder")
     fz.add_argument("target", help="throwaway name, or a path to a rapp_brainstem folder")
     fz.add_argument("--out", help="snapshot file to write")

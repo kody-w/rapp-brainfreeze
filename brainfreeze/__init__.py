@@ -1168,6 +1168,8 @@ def memory_home(chat_file, brainstem_dir):
     memory = chat.get("memory") or {}
     if not isinstance(memory, dict):
         raise ThrowawayError("that chat file's memory is not readable")
+    if not (Path(brainstem_dir).expanduser() / "soul.md").is_file():
+        raise ThrowawayError(f"no Brainstem in {brainstem_dir} (no soul.md)")
     base = (Path(brainstem_dir).expanduser() / ".brainstem_data").resolve()
     added, stamp = {}, time.strftime("%Y%m%d-%H%M%S")
     for rel, incoming in memory.items():

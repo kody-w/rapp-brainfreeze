@@ -248,6 +248,7 @@ class MemoryHomeTests(unittest.TestCase):
             self.assertEqual(set(d["memory"]["shared_memories/memory.json"]), {"a", "b"})
             home = t / "home"
             (home / ".brainstem_data" / "shared_memories").mkdir(parents=True)
+            (home / "soul.md").write_text("soul\n")
             hm = home / ".brainstem_data" / "shared_memories" / "memory.json"
             hm.write_text(json.dumps({"a": {"message": "CHANGED AT HOME"}, "z": {"message": "mine"}}))
             self.assertEqual(bf.memory_home(here / "chat.json", home), {"shared_memories/memory.json": 1})
@@ -262,5 +263,6 @@ class MemoryHomeTests(unittest.TestCase):
             t = Path(t)
             (t / "chat.json").write_text(json.dumps({"turns": [], "memory": {"../../outside.json": {"x": 1}}}))
             (t / "home").mkdir()
+            (t / "home" / "soul.md").write_text("soul\n")
             self.assertEqual(bf.memory_home(t / "chat.json", t / "home"), {})
             self.assertFalse((t / "outside.json").exists())
