@@ -165,3 +165,20 @@ class ServeOnlyPackageTests(unittest.TestCase):
             r = run("tools")
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("not_a_real_pkg", r.stdout + r.stderr)
+
+
+class ChainTests(unittest.TestCase):
+    """Seen on claude.ai 2026-11-26: a second freeze named the original upload as its parent, not the first child."""
+
+    def test_second_freeze_is_a_child_of_the_first(self):
+        with tempfile.TemporaryDirectory() as t:
+            t = Path(t)
+            snap = t / "one.snapshot.tar.gz"
+            bf.freeze(make(t / "src"), snap, history=HISTORY, session_id="s1")
+            here = t / "here"; here.mkdir()
+            host(here, "thaw", str(snap))
+            code, a = host(here, "freeze", str(t / "a.snapshot.tar.gz"))
+            code, b = host(here, "freeze", str(t / "b.snapshot.tar.gz"))
+            import hashlib
+            self.assertEqual(a["parent"]["snapshot_sha256"], hashlib.sha256(snap.read_bytes()).hexdigest())
+            self.assertEqual(b["parent"]["snapshot_sha256"], a["sha256"])

@@ -144,6 +144,9 @@ def _stand_in_serve_only():
 
 def _kernel():
     _stand_in_serve_only()
+    saved = _load("chat.json", {}).get("saved_model")
+    if saved:                       # no sign-in here, so the engine would fall back to its default model name
+        os.environ.setdefault("GITHUB_MODEL", saved)
     if not (HOME / "brainstem.py").exists():
         raise HostError("no brainstem is awake in this folder; start with: host thaw <snapshot>")
     home = str(HOME.resolve())
@@ -201,7 +204,8 @@ def thaw(snapshot):
     sha = hashlib.sha256(snap.read_bytes()).hexdigest()
     _save("history.json", history)
     _save("chat.json", {"session_id": state.get("session_id") or "host-" + time.strftime("%Y%m%d%H%M%S", time.gmtime()),
-                        "turns": [dict(m) for m in history], "thawed_from": {"snapshot_sha256": sha}})
+                        "turns": [dict(m) for m in history], "thawed_from": {"snapshot_sha256": sha},
+                        "saved_model": state.get("model")})
     return {"status": "ok", "frozen": state.get("created"), "brainstem": state.get("brainstem", {}).get("version"),
             "messages_restored": len(history), "checked": checked, "signature": signature, "snapshot_sha256": sha,
             "settings_needed": state.get("settings_needed", [])}
@@ -220,8 +224,11 @@ def freeze(out=None):
     if chat_.get("thawed_from"):
         extra["parent"] = chat_["thawed_from"]
     _freeze(HOME, out, history=history, session_id=chat_.get("session_id"), model=model, extra=extra)
+    sha = hashlib.sha256(out.read_bytes()).hexdigest()
+    chat_["thawed_from"] = {"snapshot_sha256": sha}          # the next freeze is a child of this one
+    _save("chat.json", chat_)
     return {"status": "ok", "file": str(out.resolve()), "bytes": out.stat().st_size, "messages": len(history),
-            "parent": extra.get("parent"), "sha256": hashlib.sha256(out.read_bytes()).hexdigest()}
+            "parent": extra.get("parent"), "sha256": sha}
 
 
 # ── a turn ───────────────────────────────────────────────────────────────────
