@@ -12,6 +12,7 @@ time /chat needs the model it hands the question out and waits for the answer.
     python3 -m brainfreeze host answer '{"tool_calls": [{"function": {"name": "<Agent>", "arguments": {}}}]}'
     python3 -m brainfreeze host chat                          # the conversation so far, and which agents ran
     python3 -m brainfreeze host freeze [out.snapshot.tar.gz]  # a child snapshot that names its parent
+    python3 -m brainfreeze host export [chat.json]            # the chat as the Brainstem page's Import file
 
 The engine file is never changed: its two model calls are swapped in memory for the turn and put back.
 An agent round that already ran is never run again when a turn is replayed. The Python packages the engine
@@ -231,6 +232,35 @@ def freeze(out=None):
             "parent": extra.get("parent"), "sha256": sha}
 
 
+def export(out=None):
+    """Write the conversation as the Brainstem web page's own Import file (the same shape its Export button makes),
+    so the chat continues in any local Brainstem as if it never left."""
+    if not (HOME / "brainstem.py").exists():
+        raise HostError("no brainstem is awake in this folder")
+    chat_ = _load("chat.json", {"turns": []})
+    turns = []
+    for t in chat_["turns"]:
+        if t.get("role") in ("user", "assistant") and isinstance(t.get("content"), str):
+            turn = {"role": t["role"], "content": t["content"]}
+            if t.get("timestamp"):
+                turn["timestamp"] = t["timestamp"]
+            if t["role"] == "assistant" and isinstance(t.get("agent_logs"), str) and t["agent_logs"]:
+                turn["agent_logs"] = t["agent_logs"]
+            turns.append(turn)
+    if not turns:
+        raise HostError("nothing to export yet")
+    try:
+        version = (HOME / "VERSION").read_text().strip()
+    except OSError:
+        version = "unknown"
+    out = Path(out or "brainstem-chat-" + time.strftime("%Y-%m-%dT%H-%M-%S") + ".json")
+    out.write_text(json.dumps({"exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                               "session_id": chat_.get("session_id"), "brainstem_version": version,
+                               "model": chat_.get("saved_model") or "unknown", "turns": turns}, indent=2))
+    return {"status": "ok", "file": str(out.resolve()), "turns": len(turns),
+            "load_it": "in the Brainstem page, click Import and choose this file"}
+
+
 # ── a turn ───────────────────────────────────────────────────────────────────
 
 def _run(turn):
@@ -348,6 +378,8 @@ def main(argv=None):
         elif cmd == "freeze":
             with contextlib.redirect_stdout(io.StringIO()):
                 out = freeze(rest[0] if rest else None)
+        elif cmd == "export":
+            out = export(rest[0] if rest else None)
         elif cmd == "tools":
             out = tools()
         elif cmd == "ask" and rest:

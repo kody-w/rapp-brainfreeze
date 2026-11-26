@@ -200,3 +200,28 @@ class SavedModelTests(unittest.TestCase):
                 state = json.load(tar.extractfile("state.json"))
             self.assertEqual(state["model"], "claude-haiku-5.5")
             self.assertTrue(state["woken_by"]["host"])
+
+
+class ExportTests(unittest.TestCase):
+    """Kody 2026-11-26: export the chat as .json and load it into the local Brainstem like nothing happened."""
+
+    def test_export_matches_the_page_import_shape(self):
+        with tempfile.TemporaryDirectory() as t:
+            t = Path(t)
+            snap = t / "one.snapshot.tar.gz"
+            bf.freeze(make(t / "src"), snap, history=HISTORY, session_id="s1", model="claude-haiku-5.5")
+            here = t / "here"; here.mkdir()
+            host(here, "thaw", str(snap))
+            host(here, "ask", "what is the word?")
+            host(here, "answer", json.dumps({"tool_calls": [{"function": {"name": "Echo", "arguments": {}}}]}))
+            host(here, "answer", "The word is HERON.")
+            code, out = host(here, "export", "chat.json")
+            self.assertEqual((code, out["turns"]), (0, 4))
+            d = json.loads((here / "chat.json").read_text())
+            self.assertEqual((d["session_id"], d["model"], d["brainstem_version"]), ("s1", "claude-haiku-5.5", "9.9.9"))
+            for turn in d["turns"]:          # the page's normalizeImportedChat rules
+                self.assertIn(turn["role"], ("user", "assistant"))
+                self.assertIsInstance(turn["content"], str)
+                self.assertIsInstance(turn.get("agent_logs", ""), str)
+            self.assertEqual(d["turns"][-1]["content"], "The word is HERON.")
+            self.assertIn("Echo", d["turns"][-1]["agent_logs"])
