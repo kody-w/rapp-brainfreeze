@@ -176,7 +176,7 @@ def main(argv=None):
                         if mem.name.startswith("/") or ".." in Path(mem.name).parts or mem.issym() or mem.islnk():
                             print(f"unsafe entry in snapshot: {mem.name}")
                             return 1
-                    t.extractall(tmp)
+                    t.extractall(tmp, **({"filter": "data"} if hasattr(__import__("tarfile"), "data_filter") else {}))
                 if (Path(tmp) / "bundle.json").is_file():
                     try:
                         _b.verify(tmp, json.loads((Path(tmp) / "bundle.json").read_text()))

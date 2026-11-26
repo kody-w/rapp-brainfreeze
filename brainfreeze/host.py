@@ -114,7 +114,36 @@ def _save(name, value):
     (STATE / name).write_text(json.dumps(value, indent=1))
 
 
+# Packages the engine imports only to serve a browser. host never opens a port: a turn goes through the
+# engine's own test client, so these have nothing to do here. When one is missing, an inert stand-in is put in
+# memory for this process only (nothing installed, nothing written). Anything else missing still stops host.
+_SERVE_ONLY = {
+    "flask_cors": {"CORS": lambda *a, **k: None, "cross_origin": lambda *a, **k: (lambda f: f)},
+    "dotenv": {"load_dotenv": lambda *a, **k: False},   # .env never travels in a snapshot
+}
+
+
+def _stand_in_serve_only():
+    import importlib.util, types
+    used = []
+    for name, attrs in _SERVE_ONLY.items():
+        if name in sys.modules:
+            continue
+        try:
+            if importlib.util.find_spec(name) is not None:
+                continue
+        except ImportError:
+            pass
+        m = types.ModuleType(name)
+        m.__dict__.update(attrs)
+        m.__brainfreeze_stand_in__ = True
+        sys.modules[name] = m
+        used.append(name)
+    return used
+
+
 def _kernel():
+    _stand_in_serve_only()
     if not (HOME / "brainstem.py").exists():
         raise HostError("no brainstem is awake in this folder; start with: host thaw <snapshot>")
     home = str(HOME.resolve())
@@ -124,7 +153,7 @@ def _kernel():
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             import brainstem
     except ImportError as e:
-        raise HostError(f"the engine needs a Python package that is not here: {e.name}. host installs nothing; "
+        raise HostError(f"the engine needs a Python package that is not here: {e.name or e}. host installs nothing; "
                         "make the engine's packages importable first") from None
     return brainstem
 

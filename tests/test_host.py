@@ -131,3 +131,37 @@ class HostTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ServeOnlyPackageTests(unittest.TestCase):
+    """An AI sandbox (claude.ai, 2026-11-26) had flask but not flask_cors; host stopped at step 2."""
+
+    def test_serve_only_imports_get_a_stand_in_and_others_still_stop(self):
+        with tempfile.TemporaryDirectory() as t:
+            t = Path(t)
+            b = make(t / "src")
+            # an engine that imports what only a served browser page needs; a blocker hides the real packages
+            (b / "brainstem.py").write_text("from flask_cors import CORS\nfrom dotenv import load_dotenv\n"
+                                            "load_dotenv()\nCORS(None)\n" + ENGINE)
+            snap = t / "s.snapshot.tar.gz"
+            bf.freeze(b, snap, history=HISTORY, session_id="s1")
+            here = t / "here"; here.mkdir()
+            block = t / "block"; block.mkdir()
+            (block / "sitecustomize.py").write_text(
+                "import sys\nclass B:\n"
+                "    def find_spec(self, n, p=None, t=None):\n"
+                "        if n.split('.')[0] in ('flask_cors', 'dotenv', 'not_a_real_pkg'):\n"
+                "            raise ModuleNotFoundError(n, name=n)\n"
+                "sys.meta_path.insert(0, B())\n")
+            env = {**os.environ, "PYTHONPATH": f"{block}{os.pathsep}{REPO}", "PYTHONDONTWRITEBYTECODE": "1"}
+            run = lambda *a: subprocess.run([sys.executable, "-m", "brainfreeze", "host", *a], cwd=here,
+                                            capture_output=True, text=True, env=env)
+            self.assertEqual(run("thaw", str(snap)).returncode, 0)
+            r = run("tools")
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("Echo", r.stdout)
+            # a package that is not serve-only is still refused, never faked
+            (here / "rapp_brainstem" / "brainstem.py").write_text("import not_a_real_pkg\n" + ENGINE)
+            r = run("tools")
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("not_a_real_pkg", r.stdout + r.stderr)
