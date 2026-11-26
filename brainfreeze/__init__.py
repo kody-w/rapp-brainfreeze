@@ -852,6 +852,9 @@ _BOOTSTRAP = """#!/usr/bin/env python3
 #     python3 {filename} --chat          continue the conversation right here in the terminal
 #     python3 {filename} --port 7200     pick the port
 #
+# Inside an AI that can run Python (claude.ai, any sandbox): the AI is the model, nothing is installed.
+#     python3 {filename} host thaw        then: host tools | host ask "..." | host answer "..." | host freeze <file>
+#
 # The first run on a machine with no brainstem sets up Python packages and asks you to
 # sign in to GitHub Copilot once. Sign-in and secrets are never inside this file.
 # Frozen: {created} | brainstem {version} | {n_msgs} conversation messages | settings: {settings}
@@ -893,7 +896,25 @@ def inspect(blob):
 
 
 
+def host(args):
+    \"\"\"Wake this brainstem inside the AI running this file, with that AI as its model. No server, no network.\"\"\"
+    import subprocess
+    blob = base64.b64decode("".join(PAYLOAD))
+    if hashlib.sha256(blob).hexdigest() != PAYLOAD_SHA256:
+        sys.exit("Refusing to run: this file was changed after it was packed (payload SHA-256 does not match).")
+    unpacked = Path(os.getenv("BRAINFREEZE_ROOT", Path.home() / ".brainfreeze")) / ".bootstrap" / PAYLOAD_SHA256[:16]
+    if not (unpacked / "snapshot.tar.gz").exists():
+        unpacked.mkdir(parents=True, exist_ok=True)
+        zipfile.ZipFile(io.BytesIO(blob)).extractall(unpacked)
+    if args[:1] == ["thaw"] and len(args) == 1:
+        args = ["thaw", str(unpacked / "snapshot.tar.gz")]
+    env = dict(os.environ, PYTHONPATH=str(unpacked) + os.pathsep + os.environ.get("PYTHONPATH", ""))
+    sys.exit(subprocess.call([sys.executable, "-m", "brainfreeze", "host", *args], env=env))
+
+
 def main():
+    if sys.argv[1:2] == ["host"]:
+        return host(sys.argv[2:])
     ap = argparse.ArgumentParser(description="Resume a frozen RAPP brainstem.")
     ap.add_argument("--port", type=int)
     ap.add_argument("--chat", action="store_true", help="continue the conversation in this terminal")
