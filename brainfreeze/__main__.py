@@ -7,6 +7,9 @@ from . import Throwaway, ThrowawayError, down, freeze, lay_egg, list_throwaways,
 
 
 def main(argv=None):
+    if (sys.argv[1:2] if argv is None else list(argv)[:1]) == ["host"]:      # wake inside an AI: see host.py
+        from . import host
+        return host.main(sys.argv[2:] if argv is None else list(argv)[1:])
     p = argparse.ArgumentParser(prog="brainfreeze",
                                 description="Disposable RAPP brainstems beside the real one.")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -173,7 +176,7 @@ def main(argv=None):
                         if mem.name.startswith("/") or ".." in Path(mem.name).parts or mem.issym() or mem.islnk():
                             print(f"unsafe entry in snapshot: {mem.name}")
                             return 1
-                    t.extractall(tmp)
+                    t.extractall(tmp, **({"filter": "data"} if hasattr(__import__("tarfile"), "data_filter") else {}))
                 if (Path(tmp) / "bundle.json").is_file():
                     try:
                         _b.verify(tmp, json.loads((Path(tmp) / "bundle.json").read_text()))
