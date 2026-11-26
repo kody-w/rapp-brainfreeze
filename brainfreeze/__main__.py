@@ -2,6 +2,7 @@
 import argparse
 import json
 import sys
+from pathlib import Path
 
 from . import Throwaway, ThrowawayError, down, freeze, lay_egg, list_throwaways, pack, replay
 
@@ -56,6 +57,9 @@ def main(argv=None):
     vf.add_argument("--allowed-signers", help="allowed_signers file (default: $BRAINFREEZE_ROOT/allowed_signers, "
                                               "then github.com/<login>.keys)")
 
+    mh = sub.add_parser("memory-home", help="add what a Brainstem remembered elsewhere (a chat file's memory) to one here")
+    mh.add_argument("chat_file")
+    mh.add_argument("brainstem_dir", nargs="?", default=str(Path.home() / ".brainstem" / "src" / "rapp_brainstem"))
     fz = sub.add_parser("freeze", help="snapshot a running throwaway, or any brainstem folder")
     fz.add_argument("target", help="throwaway name, or a path to a rapp_brainstem folder")
     fz.add_argument("--out", help="snapshot file to write")
@@ -107,6 +111,10 @@ def main(argv=None):
             print(f"name:    {tw.name}\nurl:     {tw.url}\nsource:  {tw.source}\n"
                   f"agents:  {tw.agents_dir}\nlog:     {tw.log_path}\n"
                   f"loaded:  {', '.join(h.get('agents', []))}\nmodel:   {h.get('model')}")
+        elif a.cmd == "memory-home":
+            from . import memory_home
+            added = memory_home(a.chat_file, a.brainstem_dir)
+            print(json.dumps({"added": added, "undo": "each changed file has a .before-<time> copy beside it"}, indent=1))
         elif a.cmd == "freeze":
             from pathlib import Path
             import time as _t
