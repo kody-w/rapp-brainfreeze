@@ -1158,3 +1158,33 @@ def lay_egg(brainstem_dir, out_dir=".", owner=None, slug=None, rappid=None, incl
 
 
 from . import bundle, lineage  # noqa: E402,F401  (bundle.json: hashes, kernel pin, sidecars; signing, lineage)
+
+
+def memory_home(chat_file, brainstem_dir):
+    """Add what a Brainstem remembered elsewhere (the `memory` a chat file carries) to the Brainstem in
+    `brainstem_dir`. Add-only: an entry that is already there is never changed or removed. Each file it touches
+    is copied to <file>.before-<time> first, so one copy back undoes it. Returns what was added."""
+    chat = json.loads(Path(chat_file).read_text())
+    memory = chat.get("memory") or {}
+    if not isinstance(memory, dict):
+        raise ThrowawayError("that chat file's memory is not readable")
+    if not (Path(brainstem_dir).expanduser() / "soul.md").is_file():
+        raise ThrowawayError(f"no Brainstem in {brainstem_dir} (no soul.md)")
+    base = (Path(brainstem_dir).expanduser() / ".brainstem_data").resolve()
+    added, stamp = {}, time.strftime("%Y%m%d-%H%M%S")
+    for rel, incoming in memory.items():
+        target = (base / rel).resolve()
+        if base not in target.parents or not rel.endswith(".json") or not isinstance(incoming, dict):
+            continue                      # only plain JSON maps inside the Brainstem's own data folder
+        current = json.loads(target.read_text()) if target.is_file() else {}
+        if not isinstance(current, dict):
+            continue
+        new = {k: v for k, v in incoming.items() if k not in current}
+        if not new:
+            continue
+        if target.is_file():
+            shutil.copy2(target, target.with_name(target.name + ".before-" + stamp))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({**current, **new}, indent=2))
+        added[rel] = len(new)
+    return added

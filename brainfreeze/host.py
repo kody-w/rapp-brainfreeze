@@ -232,6 +232,18 @@ def freeze(out=None):
             "parent": extra.get("parent"), "sha256": sha}
 
 
+def _memory():
+    """What the Brainstem remembers (its .brainstem_data JSON files), carried in the chat file. The page's Import
+    ignores it; `brainfreeze memory-home chat.json` adds it to a Brainstem at home (add-only)."""
+    data, out = HOME / ".brainstem_data", {}
+    for f in sorted(data.rglob("*.json")) if data.is_dir() else []:
+        try:
+            out[f.relative_to(data).as_posix()] = json.loads(f.read_text())
+        except (OSError, ValueError):
+            pass
+    return out
+
+
 def export(out=None):
     """Write the conversation as the Brainstem web page's own Import file (the same shape its Export button makes),
     so the chat continues in any local Brainstem as if it never left."""
@@ -256,7 +268,8 @@ def export(out=None):
     out = Path(out or "brainstem-chat-" + time.strftime("%Y-%m-%dT%H-%M-%S") + ".json")
     out.write_text(json.dumps({"exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                                "session_id": chat_.get("session_id"), "brainstem_version": version,
-                               "model": chat_.get("saved_model") or "unknown", "turns": turns}, indent=2))
+                               "model": chat_.get("saved_model") or "unknown", "turns": turns,
+                               "memory": _memory()}, indent=2))
     return {"status": "ok", "file": str(out.resolve()), "turns": len(turns),
             "load_it": "in the Brainstem page, click Import and choose this file"}
 

@@ -225,3 +225,44 @@ class ExportTests(unittest.TestCase):
                 self.assertIsInstance(turn.get("agent_logs", ""), str)
             self.assertEqual(d["turns"][-1]["content"], "The word is HERON.")
             self.assertIn("Echo", d["turns"][-1]["agent_logs"])
+
+
+class MemoryHomeTests(unittest.TestCase):
+    """Kody 2026-11-26: the chat export carries memory so Import picks up exactly where it left off."""
+
+    def test_export_carries_memory_and_home_adds_only(self):
+        with tempfile.TemporaryDirectory() as t:
+            t = Path(t)
+            src = make(t / "src")
+            (src / ".brainstem_data" / "shared_memories").mkdir(parents=True)
+            (src / ".brainstem_data" / "shared_memories" / "memory.json").write_text(
+                json.dumps({"a": {"message": "pelican"}}))
+            snap = t / "one.snapshot.tar.gz"
+            bf.freeze(src, snap, history=HISTORY, session_id="s1")
+            here = t / "here"; here.mkdir()
+            host(here, "thaw", str(snap))
+            mem = here / "rapp_brainstem" / ".brainstem_data" / "shared_memories" / "memory.json"
+            mem.write_text(json.dumps({"a": {"message": "pelican"}, "b": {"message": "green"}}))   # learned while away
+            host(here, "export", "chat.json")
+            d = json.loads((here / "chat.json").read_text())
+            self.assertEqual(set(d["memory"]["shared_memories/memory.json"]), {"a", "b"})
+            home = t / "home"
+            (home / ".brainstem_data" / "shared_memories").mkdir(parents=True)
+            (home / "soul.md").write_text("soul\n")
+            hm = home / ".brainstem_data" / "shared_memories" / "memory.json"
+            hm.write_text(json.dumps({"a": {"message": "CHANGED AT HOME"}, "z": {"message": "mine"}}))
+            self.assertEqual(bf.memory_home(here / "chat.json", home), {"shared_memories/memory.json": 1})
+            got = json.loads(hm.read_text())
+            self.assertEqual(got["a"]["message"], "CHANGED AT HOME")    # never overwritten
+            self.assertEqual(set(got), {"a", "b", "z"})
+            self.assertTrue(list(hm.parent.glob("memory.json.before-*")))   # undo copy
+            self.assertEqual(bf.memory_home(here / "chat.json", home), {})  # running it twice adds nothing
+
+    def test_memory_paths_cannot_leave_the_data_folder(self):
+        with tempfile.TemporaryDirectory() as t:
+            t = Path(t)
+            (t / "chat.json").write_text(json.dumps({"turns": [], "memory": {"../../outside.json": {"x": 1}}}))
+            (t / "home").mkdir()
+            (t / "home" / "soul.md").write_text("soul\n")
+            self.assertEqual(bf.memory_home(t / "chat.json", t / "home"), {})
+            self.assertFalse((t / "outside.json").exists())
