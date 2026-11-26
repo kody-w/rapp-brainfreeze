@@ -223,7 +223,7 @@ def freeze(out=None):
     extra = {"woken_by": {"host": True, "model": model, "python": sys.version.split()[0]}}
     if chat_.get("thawed_from"):
         extra["parent"] = chat_["thawed_from"]
-    _freeze(HOME, out, history=history, session_id=chat_.get("session_id"), model=model, extra=extra)
+    _freeze(HOME, out, history=history, session_id=chat_.get("session_id"), model=chat_.get("saved_model") or model, extra=extra)
     sha = hashlib.sha256(out.read_bytes()).hexdigest()
     chat_["thawed_from"] = {"snapshot_sha256": sha}          # the next freeze is a child of this one
     _save("chat.json", chat_)

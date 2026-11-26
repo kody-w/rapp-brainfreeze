@@ -182,3 +182,21 @@ class ChainTests(unittest.TestCase):
             import hashlib
             self.assertEqual(a["parent"]["snapshot_sha256"], hashlib.sha256(snap.read_bytes()).hexdigest())
             self.assertEqual(b["parent"]["snapshot_sha256"], a["sha256"])
+
+
+class SavedModelTests(unittest.TestCase):
+    """Seen on claude.ai 2026-11-26: a child froze its model as host-ai, losing the model the Brainstem was set to."""
+
+    def test_child_keeps_the_saved_model(self):
+        import tarfile
+        with tempfile.TemporaryDirectory() as t:
+            t = Path(t)
+            snap = t / "one.snapshot.tar.gz"
+            bf.freeze(make(t / "src"), snap, history=HISTORY, session_id="s1", model="claude-haiku-5.5")
+            here = t / "here"; here.mkdir()
+            host(here, "thaw", str(snap))
+            host(here, "freeze", "a.snapshot.tar.gz")
+            with tarfile.open(here / "a.snapshot.tar.gz") as tar:
+                state = json.load(tar.extractfile("state.json"))
+            self.assertEqual(state["model"], "claude-haiku-5.5")
+            self.assertTrue(state["woken_by"]["host"])
