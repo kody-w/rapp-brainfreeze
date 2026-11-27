@@ -274,3 +274,28 @@ class ModelNameTests(unittest.TestCase):
         self.assertEqual(h._model_name('{"model": "claude-haiku-5.5"}'), "claude-haiku-5.5")
         self.assertEqual(h._model_name("gpt-4o"), "gpt-4o")
         self.assertIsNone(h._model_name(None))
+
+
+class TakeHomeTests(unittest.TestCase):
+    """Kody 2026-11-26: coming home should be one file. take-home packs the awake Brainstem as brainstem.py."""
+
+    def test_take_home_is_one_file_with_memory_and_chat(self):
+        with tempfile.TemporaryDirectory() as t:
+            t = Path(t)
+            src = make(t / "src")
+            snap = t / "one.snapshot.tar.gz"
+            bf.freeze(src, snap, history=HISTORY, session_id="s1")
+            here = t / "here"; here.mkdir()
+            host(here, "thaw", str(snap))
+            mem = here / "rapp_brainstem" / ".brainstem_data" / "shared_memories" / "memory.json"
+            mem.parent.mkdir(parents=True, exist_ok=True)
+            mem.write_text(json.dumps({"m": {"message": "teal"}}))
+            out = host(here, "take-home", "home.py")
+            self.assertTrue((here / "home.py").is_file())
+            again = t / "again"; again.mkdir()
+            import subprocess, sys as _s
+            subprocess.run([_s.executable, str(here / "home.py"), "host", "thaw"], cwd=again, check=True,
+                           capture_output=True)
+            got = again / "rapp_brainstem" / ".brainstem_data" / "shared_memories" / "memory.json"
+            self.assertIn("teal", got.read_text())
+            self.assertEqual(len(json.loads((again / ".host" / "chat.json").read_text())["turns"]), len(HISTORY))
