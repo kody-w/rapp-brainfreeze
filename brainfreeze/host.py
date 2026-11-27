@@ -254,6 +254,21 @@ def _model_name(saved):
     return saved
 
 
+def take_home(out=None):
+    """One file to carry home: this Brainstem now (agents, soul, memory, conversation) packed as a self-waking
+    brainstem.py, a child of the one it woke from. At home: `python3 <file>`; it opens with the chat restored."""
+    from . import pack as _pack
+    import tempfile
+    with tempfile.TemporaryDirectory() as t:
+        with contextlib.redirect_stdout(io.StringIO()):
+            snap = freeze(str(Path(t) / "home.snapshot.tar.gz"))
+            out = Path(out or "brainstem-home.py")
+            _pack(snap["file"], str(out))
+    return {"status": "ok", "file": str(Path(out).resolve()), "bytes": Path(out).stat().st_size,
+            "messages": snap["messages"], "parent": snap["parent"],
+            "take_it_home": f"run: python3 {Path(out).name}   (it opens with this chat and memory)"}
+
+
 def export(out=None):
     """Write the conversation as the Brainstem web page's own Import file (the same shape its Export button makes),
     so the chat continues in any local Brainstem as if it never left."""
@@ -401,6 +416,8 @@ def main(argv=None):
         elif cmd == "freeze":
             with contextlib.redirect_stdout(io.StringIO()):
                 out = freeze(rest[0] if rest else None)
+        elif cmd == "take-home":
+            out = take_home(rest[0] if rest else None)
         elif cmd == "export":
             out = export(rest[0] if rest else None)
         elif cmd == "tools":

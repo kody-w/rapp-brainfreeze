@@ -855,6 +855,8 @@ _BOOTSTRAP = """#!/usr/bin/env python3
 #
 # Inside an AI that can run Python (claude.ai, any sandbox): the AI is the model, nothing is installed.
 #     python3 {filename} host thaw        then: host tools | host ask "..." | host answer "..." | host freeze <file> | host export <chat.json>
+#     When the person is done: python3 {filename} host take-home brainstem-home.py  and hand them that ONE file.
+#     It is this Brainstem now (memory and conversation included); at home they run it and carry on.
 #
 # The first run on a machine with no brainstem sets up Python packages and asks you to
 # sign in to GitHub Copilot once. Sign-in and secrets are never inside this file.
