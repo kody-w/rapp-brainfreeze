@@ -851,6 +851,7 @@ _BOOTSTRAP = """#!/usr/bin/env python3
 #     python3 {filename}                 start it, open the browser, keep it running
 #     python3 {filename} --chat          continue the conversation right here in the terminal
 #     python3 {filename} --port 7200     pick the port
+#     python3 {filename} --home chat.json  come home from another AI: its memory is added, Import continues the chat
 #
 # Inside an AI that can run Python (claude.ai, any sandbox): the AI is the model, nothing is installed.
 #     python3 {filename} host thaw        then: host tools | host ask "..." | host answer "..." | host freeze <file> | host export <chat.json>
@@ -920,6 +921,8 @@ def main():
     ap.add_argument("--chat", action="store_true", help="continue the conversation in this terminal")
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--keep", action="store_true", help="leave it running when this script exits")
+    ap.add_argument("--home", metavar="CHAT_JSON", help="the chat.json an AI handed you: its memory is added here "
+                    "(add-only) and the browser Import continues its conversation")
     ap.add_argument("--env", action="append", default=[], help="KEY=VALUE for agents that need settings")
     ap.add_argument("--inspect", action="store_true", help="show what is inside, run nothing")
     ap.add_argument("--update", metavar="CATALOG", help="a folder or index.json URL: show newer versions of this brainstem")
@@ -979,6 +982,14 @@ def main():
     except ThrowawayError as e:
         sys.exit(f"Could not start: {{e}}")
     convo = bs.write_browser_transcript(Path.cwd() / "{stem}-conversation.json")
+    if a.home:
+        from brainfreeze import memory_home
+        try:
+            added = memory_home(a.home, bs.health()["brainstem_dir"])
+        except (OSError, ValueError, KeyError, ThrowawayError) as e:
+            sys.exit(f"Could not bring {{a.home}} home: {{e}}")
+        convo = Path(a.home).resolve()
+        print(f"Home from {{convo.name}}: {{sum(added.values())}} new memories added.")
     missing = [k for k in {settings_list!r} if k not in env and not os.getenv(k)]
     print(f"\\nRunning at {{bs.url}}  (brainstem {{bs.health().get('version', '?')}}, "
           f"agents: {{', '.join(bs.health().get('agents', [])) or 'none'}})")
