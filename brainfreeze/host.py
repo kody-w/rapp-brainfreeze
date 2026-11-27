@@ -206,7 +206,7 @@ def thaw(snapshot):
     _save("history.json", history)
     _save("chat.json", {"session_id": state.get("session_id") or "host-" + time.strftime("%Y%m%d%H%M%S", time.gmtime()),
                         "turns": [dict(m) for m in history], "thawed_from": {"snapshot_sha256": sha},
-                        "saved_model": state.get("model")})
+                        "saved_model": _model_name(state.get("model"))})
     return {"status": "ok", "frozen": state.get("created"), "brainstem": state.get("brainstem", {}).get("version"),
             "messages_restored": len(history), "checked": checked, "signature": signature, "snapshot_sha256": sha,
             "settings_needed": state.get("settings_needed", [])}
@@ -242,6 +242,16 @@ def _memory():
         except (OSError, ValueError):
             pass
     return out
+
+
+def _model_name(saved):
+    """A snapshot may keep the model as the settings file's text ('{"model": "x"}'); the chat wants the name."""
+    if isinstance(saved, str) and saved.lstrip().startswith("{"):
+        try:
+            return json.loads(saved).get("model") or saved
+        except ValueError:
+            return saved
+    return saved
 
 
 def export(out=None):

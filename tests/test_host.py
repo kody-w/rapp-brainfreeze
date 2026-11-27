@@ -266,3 +266,11 @@ class MemoryHomeTests(unittest.TestCase):
             (t / "home" / "soul.md").write_text("soul\n")
             self.assertEqual(bf.memory_home(t / "chat.json", t / "home"), {})
             self.assertFalse((t / "outside.json").exists())
+
+
+class ModelNameTests(unittest.TestCase):
+    def test_settings_text_becomes_the_name(self):
+        from brainfreeze import host as h
+        self.assertEqual(h._model_name('{"model": "claude-haiku-5.5"}'), "claude-haiku-5.5")
+        self.assertEqual(h._model_name("gpt-4o"), "gpt-4o")
+        self.assertIsNone(h._model_name(None))
